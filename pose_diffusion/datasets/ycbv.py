@@ -31,7 +31,6 @@ Image.MAX_IMAGE_PIXELS = None
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
-
 class YcbvDataset(Dataset):
     def __init__(
         self,
@@ -77,6 +76,7 @@ class YcbvDataset(Dataset):
         # /scratch/liudan/data/ycbv/...
         self.data_dir = os.path.join(ycbv_DIR, split_name)
         
+        self.rotations = {}
 
         for scene in tqdm(self.scenes):
             scene_id = int(scene)
@@ -99,17 +99,13 @@ class YcbvDataset(Dataset):
                 K = np.array(cam_dict[str_im_id]["cam_K"], dtype=np.float32).reshape(3, 3)
                 depth_factor = 1000.0 / cam_dict[str_im_id]["depth_scale"]  # 10000
 
-                record = {
-                    "dataset_name": self.name,
-                    "file_name": osp.relpath(rgb_path, PROJ_ROOT),
-                    "depth_file": osp.relpath(depth_path, PROJ_ROOT),
-                    "height": self.height,
-                    "width": self.width,
+                image_info = {
+                    "rgb_path": rgb_path,
+                    "depth_path": depth_path,
                     "image_id": int_im_id,
                     "scene_im_id": scene_im_id,  # for evaluation
                     "cam": K,
                     "depth_factor": depth_factor,
-                    "img_type": "syn_pbr",  # NOTE: has background
                 }
 
                 insts = []
@@ -118,13 +114,18 @@ class YcbvDataset(Dataset):
                     if obj_id not in self.cat_ids:
                         continue
 
-                    cur_label = self.cat2label[obj_id]  # 0-based label
+                    scene_obj_id = f"{scene_id}/{obj_id}"
+                    if scene_obj_id not in self.rotations.keys():
+                        self.rotations[scene_obj_id] = []
+
+                    # cur_label = self.cat2label[obj_id]  # 0-based label
+
                     R = np.array(anno["cam_R_m2c"], dtype="float32").reshape(3, 3)
                     t = np.array(anno["cam_t_m2c"], dtype="float32") / 1000.0
                     pose = np.hstack([R, t.reshape(3, 1)])  #3x4
                     quat = mat2quat(R).astype("float32")
 
-                    proj = (record["cam"] @ t.T).T
+                    proj = (image_info["cam"] @ t.T).T
                     proj = proj[:2] / proj[2]
 
                     bbox_visib = gt_info_dict[str_im_id][anno_i]["bbox_visib"]
@@ -139,45 +140,27 @@ class YcbvDataset(Dataset):
                     mask_visib_file = osp.join(scene_root, "mask_visib/{:06d}_{:06d}.png".format(int_im_id, anno_i))
                     assert osp.exists(mask_file), mask_file
                     assert osp.exists(mask_visib_file), mask_visib_file
-                    # load mask visib  TODO: load both mask_visib and mask_full
-                    mask_single = mmcv.imread(mask_visib_file, "unchanged")
-                    area = mask_single.sum()
-                    if area < 3:  # filter out too small or nearly invisible instances
-                        self.num_instances_without_valid_segmentation += 1
-                        continue
 
-                    visib_fract = gt_info_dict[str_im_id][anno_i].get("visib_fract", 1.0)
+                    # xyz_path = osp.join(self.xyz_root, f"{scene_id:06d}/{int_im_id:06d}_{anno_i:06d}-xyz.pkl")
+                    # assert osp.exists(xyz_path), xyz_path
 
-                    mask_rle = binary_mask_to_rle(mask_single, compressed=True)
-
-                    xyz_path = osp.join(self.xyz_root, f"{scene_id:06d}/{int_im_id:06d}_{anno_i:06d}-xyz.pkl")
-                    assert osp.exists(xyz_path), xyz_path
-                    
                     inst = {
-                        "category_id": cur_label,  # 0-based label
-                        "bbox": bbox_visib,  # TODO: load both bbox_obj and bbox_visib
-                        "bbox_mode": BoxMode.XYWH_ABS,
+                        "category_id": obj_id,  
+                        "bbox_visib": bbox_visib,  # x, y, w, h
+                        "bbox": bbox_obj,
                         "pose": pose,
                         "quat": quat,
-                        "trans": t,
+                        "T": t,
+                        "R": R,
                         "centroid_2d": proj,  # absolute (cx, cy)
-                        "segmentation": mask_rle,
-                        "mask_full_file": mask_file,  # TODO: load as mask_full, rle
-                        "visib_fract": visib_fract,
-                        "xyz_path": xyz_path,
+                        "mask_file": mask_file,
+                        "mask_visib_file": mask_visib_file,    
                     }
+                    inst["image"] = image_info
 
-                    model_info = self.models_info[str(obj_id)]
-                    inst["model_info"] = model_info
-                    # TODO: using full mask and full xyz
-                    for key in ["bbox3d_and_center"]:
-                        inst[key] = self.models[cur_label][key]
-                    insts.append(inst)
-                if len(insts) == 0:  # filter im without anno
-                    continue
-                record["annotations"] = insts
-                dataset_dicts.append(record)
-        
+                    self.rotations[scene_obj_id].append(inst)
+
+        self.sequence_list = list(self.rotations.keys())
         
         
         self.center_box = center_box
@@ -237,59 +220,6 @@ class YcbvDataset(Dataset):
     def __len__(self):
         return len(self.sequence_list)
 
-    def build_dataset(self):
-        self.wholedata = {}
-        
-        cached_pkl = os.path.join(os.path.dirname(os.path.dirname(self.scene_info_dir)), "processed.pkl")
-        
-        if os.path.exists(cached_pkl):
-            # if you have processed annos, load it 
-            with open(cached_pkl, 'rb') as file: 
-                self.wholedata = pickle.load(file)
-        else:
-            for scene in self.scenes:
-                print(scene)
-                scene_name = "re10k" + scene
-                
-                scene_info_name = os.path.join(self.scene_info_dir, os.path.basename(scene)+".txt")
-                scene_info = np.loadtxt(scene_info_name, delimiter=' ', dtype=np.float64, skiprows=1)
-
-                filtered_data = []
-
-                for frame_idx in range(len(scene_info)):
-                    # using try here because some images may be missing
-                    try:
-                        raw_line = scene_info[frame_idx]
-                        timestamp = raw_line[0]
-                        intrinsics = raw_line[1:7]
-                        extrinsics = raw_line[7:]
-
-                        imgpath = os.path.join(self.train_dir, scene, '%s'%int(timestamp)+'.png')
-                        image_size = Image.open(imgpath).size
-                        posemat = extrinsics.reshape(3, 4).astype('float64')
-                        focal_length = intrinsics[:2]* image_size
-                        principal_point = intrinsics[2:4]* image_size
-
-                        data = {
-                                "filepath": imgpath,
-                                "R": posemat[:3,:3],
-                                "T": posemat[:3,-1],
-                                "focal_length": focal_length,
-                                "principal_point":principal_point,  
-                            }
-
-                        filtered_data.append(data)
-                    except:
-                        print("this image is missing")
-                        
-                if len(filtered_data) > self.min_num_images:
-                    self.wholedata[scene_name] = filtered_data
-                else:
-                    print(f"scene {scene_name} does not have enough image nums")
-                    
-            print("finished")
-
-
     def _jitter_bbox(self, bbox):
         # Random aug to cropping box shape
         
@@ -325,22 +255,20 @@ class YcbvDataset(Dataset):
 
         index, n_per_seq = idx_N
         sequence_name = self.sequence_list[index]
-        metadata = self.wholedata[sequence_name]
+        metadata = self.rotations[sequence_name]
         ids = np.random.choice(len(metadata), n_per_seq, replace=False)
         return self.get_data(index=index, ids=ids)
 
-    def get_data(self, index=None, sequence_name=None, ids=(0, 1), no_images=False, return_path=False):
+    def get_data(self, index=None, sequence_name=None, ids=(0, 1), no_images=False, return_path = False):
         if sequence_name is None:
             sequence_name = self.sequence_list[index]
-            
-        metadata = self.wholedata[sequence_name]
+        metadata = self.rotations[sequence_name]
+        category = self.category_map[sequence_name]
 
-        assert len(np.unique(ids)) == len(ids)
-                
         annos = [metadata[i] for i in ids]
 
         if self.sort_by_filename:
-            annos = sorted(annos, key=lambda x: x["filepath"])
+            annos = sorted(annos, key=lambda x: x["image"]["rgb_path"])
 
         images = []
         rotations = []
@@ -351,155 +279,136 @@ class YcbvDataset(Dataset):
         
         for anno in annos:
             filepath = anno["filepath"]
-            image_path = osp.join(self.Re10K_DIR, filepath)
+            image_path = anno["image"]["rgb_path"]
             image = Image.open(image_path).convert("RGB")
+
+            if self.mask_images:
+                white_image = Image.new("RGB", image.size, (255, 255, 255))
+
+                mask_path = anno["mask_path"]
+                mask = Image.open(mask_path).convert("L")
+
+                if mask.size != image.size:
+                    mask = mask.resize(image.size)
+                mask = Image.fromarray(np.array(mask) > 125)
+                image = Image.composite(image, white_image, mask)
 
             images.append(image)
             rotations.append(torch.tensor(anno["R"]))
             translations.append(torch.tensor(anno["T"]))
+            focal_lengths.append(torch.tensor(anno["focal_length"]))
+            principal_points.append(torch.tensor(anno["principal_point"]))
             image_paths.append(image_path)
-
-            ######## to make the convention of pytorch 3D happy          
-            # Raw FL PP. If you want to use them, uncomment here
-            # focal_lengths_raw.append(torch.tensor(anno["focal_length"]))
-            # principal_points_raw.append(torch.tensor(anno["principal_point"]))
             
-            # PT3D FL PP
-            original_size_wh = np.array(image.size)
-            scale = min(original_size_wh) / 2
-            c0 = original_size_wh / 2.0
-            focal_pytorch3d = anno["focal_length"] / scale
-            # mirrored principal point
-            p0_pytorch3d = -(anno["principal_point"] - c0) / scale
-            focal_lengths.append(torch.tensor(focal_pytorch3d))
-            principal_points.append(torch.tensor(p0_pytorch3d))
-            ########
-
-
         crop_parameters = []
         images_transformed = []
 
         new_fls = []
         new_pps = []
 
-
         for i, (anno, image) in enumerate(zip(annos, images)):
             w, h = image.width, image.height
 
-            if self.crop_longest:
-                crop_dim = max(h, w)
-                top = (h - crop_dim) // 2
-                left = (w - crop_dim) // 2
-                bbox = np.array([left, top, left + crop_dim, top + crop_dim])            
-            elif self.center_box:
-                crop_dim = min(h, w)
-                top = (h - crop_dim) // 2
-                left = (w - crop_dim) // 2
-                bbox = np.array([left, top, left + crop_dim, top + crop_dim])
+            if self.center_box:
+                min_dim = min(h, w)
+                top = (h - min_dim) // 2
+                left = (w - min_dim) // 2
+                bbox = np.array([left, top, left + min_dim, top + min_dim])
             else:
                 bbox = np.array(anno["bbox"])
+                # xywh -> xyxy
+                xy = bbox[:2] + bbox[2:]
+                bbox = np.concatenate(bbox[:2], xy)
 
-            if self.eval_time:
-                bbox_jitter = bbox
-            else:
+            if not self.eval_time:
                 bbox_jitter = self._jitter_bbox(bbox)
+            else:
+                bbox_jitter = bbox
+
 
             bbox_xywh = torch.FloatTensor(bbox_xyxy_to_xywh(bbox_jitter))
-
-            ### cropping images
-            focal_length_cropped, principal_point_cropped = adjust_camera_to_bbox_crop_(
+            (focal_length_cropped, principal_point_cropped) = adjust_camera_to_bbox_crop_(
                 focal_lengths[i], principal_points[i], torch.FloatTensor(image.size), bbox_xywh
             )
 
             image = self._crop_image(image, bbox_jitter, white_bg=self.mask_images)
 
-            ### resizing images
-            new_focal_length, new_principal_point = adjust_camera_to_image_scale_(
-                focal_length_cropped, 
-                principal_point_cropped, 
-                torch.FloatTensor(image.size), 
-                torch.FloatTensor([self.img_size, self.img_size])
+            (new_focal_length, new_principal_point) = adjust_camera_to_image_scale_(
+                focal_length_cropped,
+                principal_point_cropped,
+                torch.FloatTensor(image.size),
+                torch.FloatTensor([self.img_size, self.img_size]),
             )
-            
-            images_transformed.append(self.transform(image))
+
             new_fls.append(new_focal_length)
             new_pps.append(new_principal_point)
 
+            images_transformed.append(self.transform(image))
             crop_center = (bbox_jitter[:2] + bbox_jitter[2:]) / 2
             cc = (2 * crop_center / min(h, w)) - 1
             crop_width = 2 * (bbox_jitter[2] - bbox_jitter[0]) / min(h, w)
 
             crop_parameters.append(torch.tensor([-cc[0], -cc[1], crop_width]).float())
 
-        ################################################################
         images = images_transformed
+
+        batch = {"seq_id": sequence_name, "category": category, "n": len(metadata), "ind": torch.tensor(ids)}
 
         new_fls = torch.stack(new_fls)
         new_pps = torch.stack(new_pps)
 
-        batchR = torch.cat([torch.tensor(data["R"][None]) for data in annos])
-        batchT = torch.cat([torch.tensor(data["T"][None]) for data in annos])
-        
-        # From COLMAP to PT3D
-        batchR = batchR.clone().permute(0, 2, 1)
-        batchR[:, :, :2] *= -1
-        batchT[:, :2] *= -1
-
-        cameras = PerspectiveCameras(focal_length=new_fls.float(), 
-                                     principal_point=new_pps.float(), 
-                                     R=batchR.float(), 
-                                     T=batchT.float())
-
         if self.normalize_cameras:
-            ################################################################################################################            
-            norm_cameras = normalize_cameras(
-                cameras,
-                compute_optical=self.compute_optical, 
-                first_camera=self.first_camera_transform, 
-                normalize_T=True,
+            cameras = PerspectiveCameras(
+                focal_length=new_fls.numpy(),
+                principal_point=new_pps.numpy(),
+                R=[data["R"] for data in annos],
+                T=[data["T"] for data in annos],
             )
-            if norm_cameras == -1:
+
+            normalized_cameras = normalize_cameras(
+                cameras, compute_optical=self.compute_optical, first_camera=self.first_camera_transform
+            )
+
+            if normalized_cameras == -1:
                 print("Error in normalizing cameras: camera scale was 0")
                 raise RuntimeError
+
+            batch["R"] = normalized_cameras.R
+            batch["T"] = normalized_cameras.T
+            batch["crop_params"] = torch.stack(crop_parameters)
+            batch["R_original"] = torch.stack([torch.tensor(anno["R"]) for anno in annos])
+            batch["T_original"] = torch.stack([torch.tensor(anno["T"]) for anno in annos])
+
+            batch["fl"] = normalized_cameras.focal_length
+            batch["pp"] = normalized_cameras.principal_point
+
+            if torch.any(torch.isnan(batch["T"])):
+                print(ids)
+                print(category)
+                print(sequence_name)
+                raise RuntimeError
+
         else:
-            raise NotImplementedError("please normalize cameras")
-            
+            batch["R"] = torch.stack(rotations)
+            batch["T"] = torch.stack(translations)
+            batch["crop_params"] = torch.stack(crop_parameters)
+            batch["fl"] = new_fls
+            batch["pp"] = new_pps
 
-        crop_params = torch.stack(crop_parameters)
-
-
-        batch = {
-            "seq_name": sequence_name,
-            "frame_num": len(metadata),
-        }
-
-        # Add images
         if self.transform is not None:
             images = torch.stack(images)
-    
+
         if self.color_aug and (not self.eval_time):
-            for augidx in range(len(images)):
-                if self.erase_aug:
-                    if random.random() < 0.15:
-                        ex, ey, eh, ew, ev = self.rand_erase.get_params(images[augidx], scale=self.rand_erase.scale,ratio=self.rand_erase.ratio, value=[self.rand_erase.value])
-                        images[augidx] = transforms.functional.erase(images[augidx], ex, ey, eh, ew, ev, self.rand_erase.inplace)
+            images = self.color_jitter(images)
+            if self.erase_aug:
+                images = self.rand_erase(images)
 
-                images[augidx] = self.color_jitter(images[augidx])
+        batch["image"] = images
 
-        batch["image"] = images.clamp(0,1)
-
-        batch["R"] = norm_cameras.R
-        batch["T"] = norm_cameras.T
-
-        batch["fl"] = norm_cameras.focal_length
-        batch["pp"] = norm_cameras.principal_point
-        batch["crop_params"] = torch.stack(crop_parameters)
-        
-        
         if return_path:
             return batch, image_paths
-
-        return batch
+        
+        return batch   
 
 
 
