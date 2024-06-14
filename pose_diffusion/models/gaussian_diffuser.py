@@ -309,6 +309,7 @@ class GaussianDiffusion(nn.Module):
         noise = default(noise, lambda: torch.randn_like(x_start))
         # noise sample
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
+        # denoiser
         model_out = self.model(x, t, z)
 
         if self.objective == "pred_noise":

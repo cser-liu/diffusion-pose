@@ -95,6 +95,15 @@ def pose_encoding_to_camera(
 
         # clamp to avoid weird fl values
         focal_length = torch.clamp(focal_length, min=min_focal_length, max=max_focal_length)
+
+    elif pose_encoding_type == "absT_quaR":
+        # forced that 3 for absT, 4 for quaR
+        
+        abs_T = pose_encoding_reshaped[:, :3]
+        quaternion_R = pose_encoding_reshaped[:, 3:7]
+        R = quaternion_to_matrix(quaternion_R)
+        # wait for deal with ...
+        focal_length = 0
     else:
         raise ValueError(f"Unknown pose encoding {pose_encoding_type}")
 

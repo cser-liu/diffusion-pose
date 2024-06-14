@@ -78,7 +78,7 @@ class PoseDiffusionModel(nn.Module):
         image: torch.Tensor,
         gt_cameras: Optional[CamerasBase] = None,
         sequence_name: Optional[List[str]] = None,
-        cond_fn=None,
+        cond_fn=None, 
         cond_start_step=0,
         training=True,
         batch_repeat=-1,

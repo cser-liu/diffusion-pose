@@ -23,14 +23,14 @@ from util.train_util import (
     DynamicBatchSampler,
     VizStats,
     WarmupCosineRestarts,
-    get_co3d_dataset,
+    get_ycbv_dataset,
     plotly_scene_visualization,
     set_seed_and_print,
     view_color_coded_images_for_visdom,
 )
 
 
-@hydra.main(config_path="../cfgs/", config_name="default_train")
+@hydra.main(config_path="../cfgs/", config_name="ycbv_train")
 def train_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
     accelerator = Accelerator(even_batches=False, device_placement=False)
@@ -58,7 +58,7 @@ def train_fn(cfg: DictConfig):
             print("Warning: please check your visdom connection for visualization")
 
     # Data loading
-    dataset, eval_dataset = get_co3d_dataset(cfg)
+    dataset, eval_dataset = get_ycbv_dataset(cfg)
     dataloader = get_dataloader(cfg, dataset)
     eval_dataloader = get_dataloader(cfg, eval_dataset, is_eval=True)
 

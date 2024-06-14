@@ -19,9 +19,9 @@ import h5py
 from io import BytesIO
 
 from multiprocessing import Pool
-import tqdm
+from tqdm import tqdm
 import mmcv
-from transforms3d.quaternions import mat2quat, quat2mat
+
 from util.camera_transform import adjust_camera_to_bbox_crop_, adjust_camera_to_image_scale_, bbox_xyxy_to_xywh
 
 import matplotlib.pyplot as plt
@@ -47,8 +47,7 @@ class YcbvDataset(Dataset):
         first_camera_transform=True,
         first_camera_rotation_only=False,
         mask_images=False,
-        ycbv_DIR=None,
-        ycbv_ANNOTATION_DIR = None, 
+        YCBV_DIR=None,
         center_box=True,
         crop_longest=False,
         sort_by_filename=False,
@@ -57,10 +56,10 @@ class YcbvDataset(Dataset):
         erase_aug=False,
     ):
         
-        self.ycbv_DIR = ycbv_DIR
-        if ycbv_DIR == None:
+        self.ycbv_DIR = YCBV_DIR
+        if YCBV_DIR == None:
             raise NotImplementedError
-        print(f"ycbv_DIR is {ycbv_DIR}")
+        print(f"ycbv_DIR is {YCBV_DIR}")
 
         
         if split == "train":
@@ -74,9 +73,10 @@ class YcbvDataset(Dataset):
         self.cat2label = {v: i for i, v in enumerate(self.cat_ids)}  # id_map
 
         # /scratch/liudan/data/ycbv/...
-        self.data_dir = os.path.join(ycbv_DIR, split_name)
+        self.data_dir = os.path.join(YCBV_DIR, split_name)
         
         self.rotations = {}
+        self.category_map = {}
 
         for scene in tqdm(self.scenes):
             scene_id = int(scene)
@@ -95,10 +95,14 @@ class YcbvDataset(Dataset):
                 depth_path = osp.join(scene_root, "depth/{:06d}.png".format(int_im_id))
 
                 scene_im_id = f"{scene_id}/{int_im_id}"
+                
 
-                K = np.array(cam_dict[str_im_id]["cam_K"], dtype=np.float32).reshape(3, 3)
+                K = np.array(cam_dict[str_im_id]["cam_K"], dtype=np.float32)
+                focal_length = np.array([K[0], K[4]], dtype=np.float32)
+                principal_point = np.array([K[2], K[5]], dtype=np.float32)
+
                 depth_factor = 1000.0 / cam_dict[str_im_id]["depth_scale"]  # 10000
-
+                
                 image_info = {
                     "rgb_path": rgb_path,
                     "depth_path": depth_path,
@@ -108,13 +112,14 @@ class YcbvDataset(Dataset):
                     "depth_factor": depth_factor,
                 }
 
-                insts = []
                 for anno_i, anno in enumerate(gt_dict[str_im_id]):
                     obj_id = anno["obj_id"]
                     if obj_id not in self.cat_ids:
                         continue
 
                     scene_obj_id = f"{scene_id}/{obj_id}"
+                    self.category_map[scene_obj_id] = id2obj[obj_id]
+
                     if scene_obj_id not in self.rotations.keys():
                         self.rotations[scene_obj_id] = []
 
@@ -122,8 +127,9 @@ class YcbvDataset(Dataset):
 
                     R = np.array(anno["cam_R_m2c"], dtype="float32").reshape(3, 3)
                     t = np.array(anno["cam_t_m2c"], dtype="float32") / 1000.0
+
                     pose = np.hstack([R, t.reshape(3, 1)])  #3x4
-                    quat = mat2quat(R).astype("float32")
+                    # quat = mat2quat(R).astype("float32")
 
                     proj = (image_info["cam"] @ t.T).T
                     proj = proj[:2] / proj[2]
@@ -145,16 +151,22 @@ class YcbvDataset(Dataset):
                     # assert osp.exists(xyz_path), xyz_path
 
                     inst = {
+                        "rgb_path": rgb_path,
+                        "depth_path": depth_path,
+                        "mask_path": mask_file,
+                        "mask_visib_path": mask_visib_file,    
                         "category_id": obj_id,  
                         "bbox_visib": bbox_visib,  # x, y, w, h
                         "bbox": bbox_obj,
                         "pose": pose,
-                        "quat": quat,
                         "T": t,
                         "R": R,
+                        "cam": K,
+                        "focal_length": focal_length,
+                        "principal_point": principal_point,
+                        "depth_scale": depth_factor,
                         "centroid_2d": proj,  # absolute (cx, cy)
-                        "mask_file": mask_file,
-                        "mask_visib_file": mask_visib_file,    
+                        
                     }
                     inst["image"] = image_info
 
@@ -278,9 +290,8 @@ class YcbvDataset(Dataset):
         image_paths = []
         
         for anno in annos:
-            filepath = anno["filepath"]
-            image_path = anno["image"]["rgb_path"]
-            image = Image.open(image_path).convert("RGB")
+            rgb_path = anno["rgb_path"]
+            image = Image.open(rgb_path).convert("RGB")
 
             if self.mask_images:
                 white_image = Image.new("RGB", image.size, (255, 255, 255))
@@ -298,7 +309,7 @@ class YcbvDataset(Dataset):
             translations.append(torch.tensor(anno["T"]))
             focal_lengths.append(torch.tensor(anno["focal_length"]))
             principal_points.append(torch.tensor(anno["principal_point"]))
-            image_paths.append(image_path)
+            image_paths.append(rgb_path)
             
         crop_parameters = []
         images_transformed = []

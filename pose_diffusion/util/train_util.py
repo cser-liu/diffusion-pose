@@ -19,6 +19,7 @@ from pytorch3d.implicitron.tools.stats import Stats
 from pytorch3d.vis.plotly_vis import plot_scene
 from pytorch3d.implicitron.tools.vis_utils import get_visdom_connection
 from datasets.co3d_v2 import Co3dDataset
+from datasets.ycbv import YcbvDataset
 
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,29 @@ def get_co3d_dataset(cfg):
 
     # Create the eval dataset
     eval_dataset = Co3dDataset(**common_params, split="test", eval_time=True)
+
+    return dataset, eval_dataset
+
+def get_ycbv_dataset(cfg):
+    # Common dataset parameters
+    common_params = {
+        "debug": False,
+        "mask_images": False,
+        "img_size": cfg.train.img_size,
+        "normalize_cameras": cfg.train.normalize_cameras,
+        "min_num_images": cfg.train.min_num_images,
+        "YCBV_DIR": cfg.train.YCBV_DIR,
+        "first_camera_transform": cfg.train.first_camera_transform,
+        "compute_optical": cfg.train.compute_optical,
+        "color_aug": cfg.train.color_aug,
+        "erase_aug": cfg.train.erase_aug,
+    }
+
+    # Create the train dataset
+    dataset = YcbvDataset(**common_params, split="train")
+
+    # Create the eval dataset
+    eval_dataset = YcbvDataset(**common_params, split="test", eval_time=True)
 
     return dataset, eval_dataset
 
