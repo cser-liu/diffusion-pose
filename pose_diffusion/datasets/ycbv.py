@@ -81,15 +81,23 @@ class YcbvDataset(Dataset):
         for scene in tqdm(self.scenes):
             scene_id = int(scene)
             scene_root = osp.join(self.data_dir, scene)
+            with open(osp.join(scene_root, "scene_gt.json"), "r") as fin:
+                gt_dict = json.load(fin)
+            with open(osp.join(scene_root, "scene_gt_info.json"), "r") as f_info:
+                gt_info_dict = json.load(f_info)
+            with open(osp.join(scene_root, "scene_camera.json"), "r") as f_cam:
+                cam_dict = json.load(f_cam)
 
-            gt_dict = mmcv.load(osp.join(scene_root, "scene_gt.json"))
-            gt_info_dict = mmcv.load(osp.join(scene_root, "scene_gt_info.json"))
-            cam_dict = mmcv.load(osp.join(scene_root, "scene_camera.json"))
+            # gt_info_dict = mmcv.load(osp.join(scene_root, "scene_gt_info.json"))
+            # cam_dict = mmcv.load(osp.join(scene_root, "scene_camera.json"))
 
             for str_im_id in tqdm(gt_dict, postfix=f"{scene_id}"):
                 int_im_id = int(str_im_id)
                 # int_im_id: 000000 - 000999
-                rgb_path = osp.join(scene_root, "rgb/{:06d}.jpg").format(int_im_id)
+                if split == "train":
+                    rgb_path = osp.join(scene_root, "rgb/{:06d}.jpg").format(int_im_id)
+                else:
+                    rgb_path = osp.join(scene_root, "rgb/{:06d}.png").format(int_im_id)
                 assert osp.exists(rgb_path), rgb_path
 
                 depth_path = osp.join(scene_root, "depth/{:06d}.png".format(int_im_id))
@@ -131,17 +139,13 @@ class YcbvDataset(Dataset):
                     pose = np.hstack([R, t.reshape(3, 1)])  #3x4
                     # quat = mat2quat(R).astype("float32")
 
-                    proj = (image_info["cam"] @ t.T).T
-                    proj = proj[:2] / proj[2]
+                    # proj = (image_info["cam"] @ t.T).T
+                    # proj = proj[:2] / proj[2]
 
                     bbox_visib = gt_info_dict[str_im_id][anno_i]["bbox_visib"]
                     bbox_obj = gt_info_dict[str_im_id][anno_i]["bbox_obj"]
                     x1, y1, w, h = bbox_visib
-                    if self.filter_invalid:
-                        if h <= 1 or w <= 1:
-                            self.num_instances_without_valid_box += 1
-                            continue
-
+                    
                     mask_file = osp.join(scene_root, "mask/{:06d}_{:06d}.png".format(int_im_id, anno_i))
                     mask_visib_file = osp.join(scene_root, "mask_visib/{:06d}_{:06d}.png".format(int_im_id, anno_i))
                     assert osp.exists(mask_file), mask_file
@@ -165,7 +169,7 @@ class YcbvDataset(Dataset):
                         "focal_length": focal_length,
                         "principal_point": principal_point,
                         "depth_scale": depth_factor,
-                        "centroid_2d": proj,  # absolute (cx, cy)
+                        # "centroid_2d": proj,  # absolute (cx, cy)
                         
                     }
                     inst["image"] = image_info
@@ -178,11 +182,6 @@ class YcbvDataset(Dataset):
         self.center_box = center_box
         self.crop_longest = crop_longest
         self.min_num_images = min_num_images            
-
-        self.build_dataset()
-        
-        self.sequence_list = sorted(list(self.wholedata.keys()))
-        self.sequence_list_len = len(self.sequence_list)
 
         self.debug = debug
         self.sort_by_filename = sort_by_filename
