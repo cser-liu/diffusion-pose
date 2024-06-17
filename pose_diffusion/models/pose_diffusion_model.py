@@ -28,6 +28,7 @@ from util.camera_transform import pose_encoding_to_camera, camera_to_pose_encodi
 import models
 from hydra.utils import instantiate
 from pytorch3d.renderer.cameras import PerspectiveCameras
+from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion, quaternion_to_matrix
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class PoseDiffusionModel(nn.Module):
     def forward(
         self,
         image: torch.Tensor,
+        gt_pose = {},
         gt_cameras: Optional[CamerasBase] = None,
         sequence_name: Optional[List[str]] = None,
         cond_fn=None, 
@@ -109,7 +111,10 @@ class PoseDiffusionModel(nn.Module):
         reshaped_image = image.reshape(batch_num * frame_num, *shapelist[2:])
         z = self.image_feature_extractor(reshaped_image).reshape(batch_num, frame_num, -1)
         if training:
-            pose_encoding = camera_to_pose_encoding(gt_cameras, pose_encoding_type=self.pose_encoding_type)
+            # pose_encoding = camera_to_pose_encoding(gt_cameras, pose_encoding_type=self.pose_encoding_type)
+            # Convert rotation matrix to quaternion
+            quaternion_R = matrix_to_quaternion(gt_pose["R"])
+            pose_encoding = torch.cat([gt_pose["T"], quaternion_R], dim=-1)
 
             if batch_repeat > 0:
                 pose_encoding = pose_encoding.reshape(batch_num * batch_repeat, -1, self.target_dim)
@@ -119,9 +124,14 @@ class PoseDiffusionModel(nn.Module):
 
             diffusion_results = self.diffuser(pose_encoding, z=z)
 
-            diffusion_results["pred_cameras"] = pose_encoding_to_camera(
-                diffusion_results["x_0_pred"], pose_encoding_type=self.pose_encoding_type
-            )
+            pose_pred_reshaped = diffusion_results["x_0_pred"].reshape(-1, diffusion_results["x_0_pred"].shape[-1])  # Reshape to BNxC
+            abs_T = pose_pred_reshaped[:, :3]
+            quaternion_R = pose_pred_reshaped[:, 3:7]
+            R = quaternion_to_matrix(quaternion_R)
+            diffusion_results["pred_pose"] = {
+                "R": R,
+                "T": abs_T,
+            }
 
             return diffusion_results
         else:
@@ -134,9 +144,15 @@ class PoseDiffusionModel(nn.Module):
                 shape=target_shape, z=z, cond_fn=cond_fn, cond_start_step=cond_start_step
             )
 
-            # convert the encoded representation to PyTorch3D cameras
-            pred_cameras = pose_encoding_to_camera(pose_encoding, pose_encoding_type=self.pose_encoding_type)
+            pose_pred_reshaped = pose_encoding.reshape(-1, pose_encoding.shape[-1])  # Reshape to BNxC
+            abs_T = pose_pred_reshaped[:, :3]
+            quaternion_R = pose_pred_reshaped[:, 3:7]
+            R = quaternion_to_matrix(quaternion_R)
+            pred_pose = {
+                "R": R,
+                "T": abs_T,
+            }
 
-            diffusion_results = {"pred_cameras": pred_cameras, "z": z}
+            diffusion_results = {"pred_pose": pred_pose,  "z": z}
 
             return diffusion_results

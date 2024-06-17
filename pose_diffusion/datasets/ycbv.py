@@ -125,7 +125,7 @@ class YcbvDataset(Dataset):
                     if obj_id not in self.cat_ids:
                         continue
 
-                    scene_obj_id = f"{scene_id}/{obj_id}"
+                    scene_obj_id = f"scene{scene_id}_obj{obj_id}"
                     self.category_map[scene_obj_id] = id2obj[obj_id]
 
                     if scene_obj_id not in self.rotations.keys():
@@ -177,7 +177,7 @@ class YcbvDataset(Dataset):
                     self.rotations[scene_obj_id].append(inst)
 
         self.sequence_list = list(self.rotations.keys())
-        
+        # print(f"sequence nums: {self.sequence_list}")
         
         self.center_box = center_box
         self.crop_longest = crop_longest

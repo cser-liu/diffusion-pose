@@ -23,7 +23,7 @@ class Denoiser(nn.Module):
     def __init__(
         self,
         TRANSFORMER: Dict,
-        target_dim: int = 9,  # TODO: reduce fl dim from 2 to 1
+        target_dim: int = 7,  # TODO: reduce fl dim from 2 to 1
         pivot_cam_onehot: bool = True,
         z_dim: int = 384,
         mlp_hidden_dim: bool = 128,

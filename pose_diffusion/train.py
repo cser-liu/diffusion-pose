@@ -18,7 +18,7 @@ from accelerate import Accelerator
 from omegaconf import DictConfig, OmegaConf
 from pytorch3d.renderer.cameras import PerspectiveCameras
 from pytorch3d.vis.plotly_vis import plot_scene
-from util.metric import camera_to_rel_deg, calculate_auc
+from util.metric import camera_to_rel_deg, calculate_auc, pose_to_rel_deg
 from util.train_util import (
     DynamicBatchSampler,
     VizStats,
@@ -59,6 +59,9 @@ def train_fn(cfg: DictConfig):
 
     # Data loading
     dataset, eval_dataset = get_ycbv_dataset(cfg)
+    print(f"len of dataset is {len(dataset)}")
+    print(f"len of eval_dataset is {len(eval_dataset)}")
+
     dataloader = get_dataloader(cfg, dataset)
     eval_dataloader = get_dataloader(cfg, eval_dataset, is_eval=True)
 
@@ -161,66 +164,42 @@ def _train_or_eval_fn(
 
     stat_set = "train" if training else "eval"
 
-    for step, batch in enumerate(dataloader):
+    for step, batch in enumerate(dataloader):     
         # data preparation
         images = batch["image"].to(accelerator.device)
         translation = batch["T"].to(accelerator.device)
         rotation = batch["R"].to(accelerator.device)
         fl = batch["fl"].to(accelerator.device)
-        pp = batch["pp"].to(accelerator.device)
 
         if training and cfg.train.batch_repeat > 0:
             # repeat samples by several times
             # to accelerate training
             br = cfg.train.batch_repeat
-            gt_cameras = PerspectiveCameras(
-                focal_length=fl.reshape(-1, 2).repeat(br, 1),
-                R=rotation.reshape(-1, 3, 3).repeat(br, 1, 1),
-                T=translation.reshape(-1, 3).repeat(br, 1),
-                device=accelerator.device,
-            )
+            gt_pose = {
+                "R": rotation.reshape(-1, 3, 3).repeat(br, 1, 1),
+                "T": translation.reshape(-1, 3).repeat(br, 1),
+            }
+            # gt_pose = gt_pose.to(accelerator.device)
             batch_size = len(images) * br
         else:
-            gt_cameras = PerspectiveCameras(
-                focal_length=fl.reshape(-1, 2),
-                R=rotation.reshape(-1, 3, 3),
-                T=translation.reshape(-1, 3),
-                device=accelerator.device,
-            )
+            gt_pose = {
+                "R": rotation.reshape(-1, 3, 3),
+                "T": translation.reshape(-1, 3),
+            }
+            # gt_pose = gt_pose.to(accelerator.device)
             batch_size = len(images)
 
         if training:
-            predictions = model(images, gt_cameras=gt_cameras, training=True, batch_repeat=cfg.train.batch_repeat)
+            predictions = model(images, gt_pose=gt_pose, training=True, batch_repeat=cfg.train.batch_repeat)
             predictions["loss"] = predictions["loss"].mean()
             loss = predictions["loss"]
         else:
             with torch.no_grad():
                 predictions = model(images, training=False)
 
-        pred_cameras = predictions["pred_cameras"]
+        pred_pose = predictions["pred_pose"] # object pose
 
-        # compute metrics
-        rel_rangle_deg, rel_tangle_deg = camera_to_rel_deg(pred_cameras, gt_cameras, accelerator.device, batch_size)
-
-        # metrics to report
-        Racc_5 = (rel_rangle_deg < 5).float().mean()
-        Racc_15 = (rel_rangle_deg < 15).float().mean()
-        Racc_30 = (rel_rangle_deg < 30).float().mean()
-
-        Tacc_5 = (rel_tangle_deg < 5).float().mean()
-        Tacc_15 = (rel_tangle_deg < 15).float().mean()
-        Tacc_30 = (rel_tangle_deg < 30).float().mean()
-
-        # also called mAA in some literature
-        Auc_30 = calculate_auc(rel_rangle_deg, rel_tangle_deg, max_threshold=30)
-
-        predictions["Racc_5"] = Racc_5
-        predictions["Racc_15"] = Racc_15
-        predictions["Racc_30"] = Racc_30
-        predictions["Tacc_5"] = Tacc_5
-        predictions["Tacc_15"] = Tacc_15
-        predictions["Tacc_30"] = Tacc_30
-        predictions["Auc_30"] = Auc_30
+        
 
         if visualize:
             # an example if trying to conduct visualization by visdom
@@ -255,6 +234,9 @@ def _train_or_eval_fn(
 
 def get_dataloader(cfg, dataset, is_eval=False):
     """Utility function to get DataLoader."""
+
+    print(f"The length of dataset is {len(dataset)}")
+
     prefix = "eval" if is_eval else "train"
     batch_sampler = DynamicBatchSampler(
         len(dataset),
