@@ -169,7 +169,6 @@ def _train_or_eval_fn(
         images = batch["image"].to(accelerator.device)
         translation = batch["T"].to(accelerator.device)
         rotation = batch["R"].to(accelerator.device)
-        fl = batch["fl"].to(accelerator.device)
 
         if training and cfg.train.batch_repeat > 0:
             # repeat samples by several times
@@ -188,6 +187,7 @@ def _train_or_eval_fn(
             }
             # gt_pose = gt_pose.to(accelerator.device)
             batch_size = len(images)
+        # print(f"batch size is {batch_size}")
 
         if training:
             predictions = model(images, gt_pose=gt_pose, training=True, batch_repeat=cfg.train.batch_repeat)

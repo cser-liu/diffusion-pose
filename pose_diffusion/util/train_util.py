@@ -42,7 +42,7 @@ class DynamicBatchSampler(BatchSampler):
             # number of sequences
             n_seqs = self.max_images // n_per_seq
 
-            # randomly select sequences
+            # randomly select n_seqs sequences from num_sequences
             chosen_seq = self._capped_random_choice(self.num_sequences, n_seqs)
 
             # get item

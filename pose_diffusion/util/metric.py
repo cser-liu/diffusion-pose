@@ -9,6 +9,46 @@ import numpy as np
 import torch
 
 from pytorch3d.transforms import so3_relative_angle
+# from pytorch3d.transforms import RigidTransform3D
+
+def pose_to_rel_deg(pred_pose, gt_pose, device, batch_size):
+    """
+    Calculate relative rotation and translation angles between predicted and ground truth object pose.
+
+    Args:
+    - pred_pose: Predicted pose.
+    - gt_pose: Ground truth pose.
+    - accelerator: The device for moving tensors to GPU or others.
+    - batch_size: Number of data samples in one batch.
+
+    Returns:
+    - rel_rotation_angle_deg, rel_translation_angle_deg: Relative rotation and translation angles in degrees.
+    """
+
+    with torch.no_grad():
+        gt_transform = RigidTransform3D(rotation=gt_pose.R, translation=gt_pose.T)
+        pred_transform = RigidTransform3D(rotation=pred_pose.R, translation=pred_pose.T)
+
+        # Convert pose to 4x4 SE3 transformation matrices
+        gt_se3 = gt_transform.get_matrix()
+        pred_se3 = pred_transform.get_matrix()
+
+        # Generate pairwise indices to compute relative poses
+        pair_idx_i1, pair_idx_i2 = batched_all_pairs(batch_size, gt_se3.shape[0] // batch_size)
+        pair_idx_i1 = pair_idx_i1.to(device)
+
+        # Compute relative camera poses between pairs
+        # We use closed_form_inverse to avoid potential numerical loss by torch.inverse()
+        # This is possible because of SE3
+        relative_pose_gt = closed_form_inverse(gt_se3[pair_idx_i1]).bmm(gt_se3[pair_idx_i2])
+        relative_pose_pred = closed_form_inverse(pred_se3[pair_idx_i1]).bmm(pred_se3[pair_idx_i2])
+
+        # Compute the difference in rotation and translation
+        # between the ground truth and predicted relative camera poses
+        rel_rangle_deg = rotation_angle(relative_pose_gt[:, :3, :3], relative_pose_pred[:, :3, :3])
+        rel_tangle_deg = translation_angle(relative_pose_gt[:, 3, :3], relative_pose_pred[:, 3, :3])
+
+    return rel_rangle_deg, rel_tangle_deg
 
 
 def camera_to_rel_deg(pred_cameras, gt_cameras, device, batch_size):

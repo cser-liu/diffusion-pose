@@ -7,7 +7,6 @@ train:
     YCBV_DIR: "/scratch/liudan/data/ycbv"
     
     img_size: 224
-    category: seen
     restart_num: 50
     lr: 0.0001
     resume_ckpt: False
@@ -19,8 +18,8 @@ train:
 
     print_interval: 10
 
-    len_train: 1050
-    len_eval: 55
+    len_train: 16384
+    len_eval: 256
 
     max_images: 256
     normalize_cameras: False
@@ -31,12 +30,12 @@ train:
     preload_image: False
     cudnnbenchmark: False
     first_camera_transform: True
-    min_num_images: 20
-    images_per_seq: [3, 20]
+    min_num_images: 50
+    images_per_seq: [3, 51]
     compute_optical: True
     color_aug: True
     erase_aug: False
-    batch_repeat: 1
+    batch_repeat: 90
 
 debug: False
 

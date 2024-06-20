@@ -81,8 +81,8 @@ class YcbvDataset(Dataset):
         for scene in tqdm(self.scenes):
             scene_id = int(scene)
             scene_root = osp.join(self.data_dir, scene)
-            with open(osp.join(scene_root, "scene_gt.json"), "r") as fin:
-                gt_dict = json.load(fin)
+            with open(osp.join(scene_root, "scene_gt.json"), "r") as f:
+                gt_dict = json.load(f)
             with open(osp.join(scene_root, "scene_gt_info.json"), "r") as f_info:
                 gt_info_dict = json.load(f_info)
             with open(osp.join(scene_root, "scene_camera.json"), "r") as f_cam:
