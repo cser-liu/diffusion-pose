@@ -1,6 +1,6 @@
 seed: 0
 exp_name: exp001_train
-exp_dir: "name_your_own"
+exp_dir: "checkpoints"
 
 train:
     # Please Specify Your Own Path
@@ -18,7 +18,7 @@ train:
 
     print_interval: 10
 
-    len_train: 16384
+    len_train: 1000
     len_eval: 256
 
     max_images: 256

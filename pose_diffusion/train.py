@@ -10,6 +10,8 @@ from collections import OrderedDict
 from functools import partial
 from typing import Dict, List, Optional, Union
 from multiprocessing import Pool
+import cv2
+import numpy as np
 
 import hydra
 import torch
@@ -164,9 +166,14 @@ def _train_or_eval_fn(
 
     stat_set = "train" if training else "eval"
 
-    for step, batch in enumerate(dataloader):     
+    for step, batch in enumerate(dataloader):  
+        # image = np.array(batch["image"][0])      
+        # for i in range(image.shape[0]):
+        #     cv2.imwrite(f"/scratch/liudan/PoseDiffusion/images/{i}.jpg", image[i].transpose(1, 2, 0)*255)
+        # print(image.shape)
         # data preparation
         images = batch["image"].to(accelerator.device)
+
         translation = batch["T"].to(accelerator.device)
         rotation = batch["R"].to(accelerator.device)
 
@@ -193,6 +200,7 @@ def _train_or_eval_fn(
             predictions = model(images, gt_pose=gt_pose, training=True, batch_repeat=cfg.train.batch_repeat)
             predictions["loss"] = predictions["loss"].mean()
             loss = predictions["loss"]
+            # accelerator.print(f"loss is {loss}")
         else:
             with torch.no_grad():
                 predictions = model(images, training=False)

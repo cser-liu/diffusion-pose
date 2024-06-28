@@ -122,7 +122,7 @@ def get_ycbv_dataset(cfg):
     # Common dataset parameters
     common_params = {
         "debug": False,
-        "mask_images": False,
+        "mask_images": True,
         "img_size": cfg.train.img_size,
         "normalize_cameras": cfg.train.normalize_cameras,
         "min_num_images": cfg.train.min_num_images,

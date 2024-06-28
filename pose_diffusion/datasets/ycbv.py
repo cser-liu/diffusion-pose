@@ -45,10 +45,9 @@ class YcbvDataset(Dataset):
         eval_time=False,
         normalize_cameras=False,
         first_camera_transform=True,
-        first_camera_rotation_only=False,
-        mask_images=False,
+        mask_images=True,
         YCBV_DIR=None,
-        center_box=True,
+        center_box=False,
         crop_longest=False,
         sort_by_filename=False,
         compute_optical=False,
@@ -145,6 +144,9 @@ class YcbvDataset(Dataset):
                     bbox_visib = gt_info_dict[str_im_id][anno_i]["bbox_visib"]
                     bbox_obj = gt_info_dict[str_im_id][anno_i]["bbox_obj"]
                     x1, y1, w, h = bbox_visib
+
+                    if h <= 1 or w <= 1:
+                        continue
                     
                     mask_file = osp.join(scene_root, "mask/{:06d}_{:06d}.png".format(int_im_id, anno_i))
                     mask_visib_file = osp.join(scene_root, "mask_visib/{:06d}_{:06d}.png".format(int_im_id, anno_i))
@@ -190,7 +192,7 @@ class YcbvDataset(Dataset):
             self.transform = transforms.Compose(
                 [
                     transforms.ToTensor(),
-                    transforms.Resize(img_size, antialias=True),
+                    transforms.Resize((224, 224), antialias=True),
                 ]
             )
         else:
@@ -328,7 +330,7 @@ class YcbvDataset(Dataset):
                 bbox = np.array(anno["bbox"])
                 # xywh -> xyxy
                 xy = bbox[:2] + bbox[2:]
-                bbox = np.concatenate(bbox[:2], xy)
+                bbox = np.concatenate([bbox[:2], xy])
 
             if not self.eval_time:
                 bbox_jitter = self._jitter_bbox(bbox)

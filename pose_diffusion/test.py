@@ -88,7 +88,7 @@ def test_fn(cfg: DictConfig):
     print("-"*100)
     
     category_dict = {}
-    metric_name = ["Auc_30", "Racc_5", "Racc_15", "Racc_30", "Tacc_5", "Tacc_15", "Tacc_30"]
+    metric_name = ["ADD_0.1d", "Proj_5pix"]
     
     for m_name in metric_name:
         category_dict[m_name] = {}
