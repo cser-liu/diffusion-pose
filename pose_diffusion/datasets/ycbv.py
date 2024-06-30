@@ -9,6 +9,7 @@ import torch
 from PIL import Image, ImageFile
 from pytorch3d.renderer import PerspectiveCameras
 from pytorch3d.renderer.cameras import get_ndc_to_screen_transform
+from pytorch3d import io as py3d_io
 from torch.utils.data import Dataset
 from torchvision import transforms
 import pickle
@@ -66,7 +67,7 @@ class YcbvDataset(Dataset):
             self.scenes = [f"{i:06d}" for i in range(50)]
         elif split == "test":
             split_name = "test"
-            self.scenes = [f"{i:06d}" for i in range(48, 60)]
+            self.scenes = [f"{i:06d}" for i in range(48, 50)]
 
         self.cat_ids = [cat_id for cat_id, obj_name in id2obj.items()]
         self.cat2label = {v: i for i, v in enumerate(self.cat_ids)}  # id_map
@@ -124,6 +125,9 @@ class YcbvDataset(Dataset):
                     if obj_id not in self.cat_ids:
                         continue
 
+                    self.obj_ply_path = osp.join(YCBV_DIR, "models/obj_{:06d}.ply".format(obj_id))
+                    self.obj_pointcloud = py3d_io.load_ply(self.obj_ply_path)[0].numpy()  # convert to m
+
                     scene_obj_id = f"scene{scene_id}_obj{obj_id}"
                     self.category_map[scene_obj_id] = id2obj[obj_id]
 
@@ -167,7 +171,8 @@ class YcbvDataset(Dataset):
                         "pose": pose,
                         "T": t,
                         "R": R,
-                        "cam": K,
+                        "cam": K.reshape(3, 3),
+                        "pts": self.obj_pointcloud,
                         "focal_length": focal_length,
                         "principal_point": principal_point,
                         "depth_scale": depth_factor,
@@ -289,6 +294,7 @@ class YcbvDataset(Dataset):
         focal_lengths = []
         principal_points = []
         image_paths = []
+        pts = []
         
         for anno in annos:
             rgb_path = anno["rgb_path"]
@@ -308,6 +314,7 @@ class YcbvDataset(Dataset):
             images.append(image)
             rotations.append(torch.tensor(anno["R"]))
             translations.append(torch.tensor(anno["T"]))
+            pts.append(torch.tensor(anno["pts"]))
             focal_lengths.append(torch.tensor(anno["focal_length"]))
             principal_points.append(torch.tensor(anno["principal_point"]))
             image_paths.append(rgb_path)

@@ -25,7 +25,8 @@ from pytorch3d.vis.plotly_vis import plot_scene
 from datasets.co3d_v2 import TRAINING_CATEGORIES, TEST_CATEGORIES, DEBUG_CATEGORIES
 from util.match_extraction import extract_match
 from util.geometry_guided_sampling import geometry_guided_sampling
-from util.metric import camera_to_rel_deg, calculate_auc_np
+# from util.metric import camera_to_rel_deg, calculate_auc_np
+from util.metric import calc_pose_error, calc_add_metric, calc_projection_2d_error, calc_bbox_IOU, aggregate_metrics
 from util.load_img_folder import load_and_preprocess_images
 from util.train_util import (
     get_co3d_dataset_test,
@@ -35,7 +36,7 @@ from util.train_util import (
 
 
 
-@hydra.main(config_path="../cfgs/", config_name="default_test")
+@hydra.main(config_path="../cfgs/", config_name="ycbv_test")
 def test_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
     accelerator = Accelerator(even_batches=False, device_placement=False)
@@ -58,11 +59,11 @@ def test_fn(cfg: DictConfig):
     model = accelerator.prepare(model)
 
     if cfg.test.resume_ckpt:
-        checkpoint = torch.load(cfg.test.resume_ckpt)
-        try:
-            model.load_state_dict(prefix_with_module(checkpoint), strict=True)
-        except:
-            model.load_state_dict(checkpoint, strict=True)
+        accelerator.load_state(cfg.test.resume_ckpt)
+        # try:
+        #     model.load_state_dict(prefix_with_module(checkpoint), strict=True)
+        # except:
+        #     model.load_state_dict(checkpoint, strict=True)
 
         accelerator.print(f"Successfully resumed from {cfg.test.resume_ckpt}")
 
@@ -196,13 +197,7 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
         rotation = batch["R"].to(accelerator.device)
         fl = batch["fl"].to(accelerator.device)
         pp = batch["pp"].to(accelerator.device)
-
-        gt_cameras = PerspectiveCameras(
-            focal_length=fl.reshape(-1, 2),
-            R=rotation.reshape(-1, 3, 3),
-            T=translation.reshape(-1, 3),
-            device=accelerator.device,
-            )
+        pts = batch["pts"].to(accelerator.device)
 
         # expand to 1 x N x 3 x H x W
         images = images.unsqueeze(0)
@@ -211,10 +206,27 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
         with torch.no_grad():
             predictions = model(images, cond_fn=cond_fn, cond_start_step=cfg.GGS.start_step, training=False)
 
-        pred_cameras = predictions["pred_cameras"]
+        pred_pose = predictions["pred_pose"]
+        batch_size = len(translation)
         
         # compute metrics
-        rel_rangle_deg, rel_tangle_deg = camera_to_rel_deg(pred_cameras, gt_cameras, accelerator.device, batch_size)
+        r_error, t_error = 0
+        for i in range(batch_size):
+            pred_RT = np.eye(4)
+            pred_RT[:3, :3] = np.array(pred_pose['R'][i], dtype=np.float32)
+            pred_RT[:3, 3] = np.array(pred_pose['T'][i], dtype=np.float32).reshape(3)
+
+            gt_RT = np.eye(4)
+            gt_RT[:3, :3] = np.array(rotation[i], dtype=np.float32)
+            gt_RT[:3, 3] = np.array(translation[i], dtype=np.float32).reshape(3)
+
+            re, te = calc_pose_error(pred_RT, gt_RT, unit='m')
+            r_error += re
+            t_error += te
+
+        r_error = r_error/batch_size
+        t_error = t_error/batch_size
+
 
         print(f"    --  Pair Rot   Error (Deg): {rel_rangle_deg.mean():10.2f}")
         print(f"    --  Pair Trans Error (Deg): {rel_tangle_deg.mean():10.2f}")
