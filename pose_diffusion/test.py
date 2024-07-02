@@ -22,21 +22,22 @@ from pytorch3d.ops import corresponding_cameras_alignment
 from pytorch3d.renderer.cameras import PerspectiveCameras
 from pytorch3d.vis.plotly_vis import plot_scene
 
-from datasets.co3d_v2 import TRAINING_CATEGORIES, TEST_CATEGORIES, DEBUG_CATEGORIES
+from datasets.linemod_test import TRAINING_CATEGORIES, TEST_CATEGORIES, DEBUG_CATEGORIES
 from util.match_extraction import extract_match
 from util.geometry_guided_sampling import geometry_guided_sampling
 # from util.metric import camera_to_rel_deg, calculate_auc_np
 from util.metric import calc_pose_error, calc_add_metric, calc_projection_2d_error, calc_bbox_IOU, aggregate_metrics
 from util.load_img_folder import load_and_preprocess_images
 from util.train_util import (
-    get_co3d_dataset_test,
+    get_lm_dataset_test,
+    get_ycbv_dataset_test,
     set_seed_and_print,
 )
 
 
 
 
-@hydra.main(config_path="../cfgs/", config_name="ycbv_test")
+@hydra.main(config_path="../cfgs/", config_name="lm_test")
 def test_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
     accelerator = Accelerator(even_batches=False, device_placement=False)
@@ -70,8 +71,8 @@ def test_fn(cfg: DictConfig):
 
     categories = cfg.test.category
 
-    if "seen" in categories:
-        categories = TRAINING_CATEGORIES
+    # if "seen" in categories:
+    #     categories = TRAINING_CATEGORIES
             
     if "unseen" in categories:
         categories = TEST_CATEGORIES
@@ -89,7 +90,7 @@ def test_fn(cfg: DictConfig):
     print("-"*100)
     
     category_dict = {}
-    metric_name = ["ADD_0.1d", "Proj_5pix"]
+    metric_name = ["r_Error", "t_Error", "ADD_metric", "Proj2D"]
     
     for m_name in metric_name:
         category_dict[m_name] = {}
@@ -107,20 +108,11 @@ def test_fn(cfg: DictConfig):
             random_order = cfg.test.random_order, 
             accelerator = accelerator,
         )
-        
-        rError = np.array(error_dict['rError'])
-        tError = np.array(error_dict['tError'])
-        
-        category_dict["Racc_5"][category] = np.mean(rError < 5) * 100
-        category_dict["Racc_15"][category] = np.mean(rError < 15) * 100
-        category_dict["Racc_30"][category] = np.mean(rError < 30) * 100
-        
-        category_dict["Tacc_5"][category] = np.mean(tError < 5) * 100
-        category_dict["Tacc_15"][category] = np.mean(tError < 15) * 100
-        category_dict["Tacc_30"][category] = np.mean(tError < 30) * 100
-        
-        Auc_30 = calculate_auc_np(rError, tError, max_threshold=30)
-        category_dict["Auc_30"][category]  = Auc_30 * 100
+
+        category_dict["r_Error"][category] = error_dict["r_Error"]
+        category_dict["t_Error"][category] = error_dict["t_Error"]
+        category_dict["ADD_metric"][category] = error_dict["ADD_metric"]
+        category_dict["Proj2D"][category] = error_dict["Proj2D"]
         
         print("-"*100)
         print(f"Category {category} Done")
@@ -147,15 +139,16 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
     print(f"******************************** test on {category} ********************************")
 
     # Data loading
-    test_dataset = get_co3d_dataset_test(cfg, category = category)
+    test_dataset = get_lm_dataset_test(cfg, category=category)
     
-    category_error_dict = {"rError":[], "tError":[]}
+    category_error_dict = {"r_Error":[], "t_Error":[], "ADD_metric":[], "Proj2D":[]}
     
     for seq_name in test_dataset.sequence_list: 
-        print(f"Testing the sequence {seq_name.ljust(15, ' ')} of category {category.ljust(15, ' ')}")
+        # print(f"Testing the sequence {seq_name.ljust(15, ' ')} of category {category.ljust(15, ' ')}")
         metadata = test_dataset.rotations[seq_name]
+        print(f"length of metadata is {len(metadata)}")
         
-        if len(metadata)<num_frames:
+        if len(metadata) < num_frames:
             print(f"Skip sequence {seq_name}")
             continue
         
@@ -195,44 +188,48 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
             
         translation = batch["T"].to(accelerator.device)
         rotation = batch["R"].to(accelerator.device)
-        fl = batch["fl"].to(accelerator.device)
-        pp = batch["pp"].to(accelerator.device)
-        pts = batch["pts"].to(accelerator.device)
+        # fl = batch["fl"].to(accelerator.device)
+        # pp = batch["pp"].to(accelerator.device)
+        pts = test_dataset.obj_pointcloud
+        camK = test_dataset.camK
+        diameter = test_dataset.diameter
 
+        batch_size = len(images)
         # expand to 1 x N x 3 x H x W
         images = images.unsqueeze(0)
-        batch_size = len(images)
+        
+        print(f"image num is {batch_size}")
 
         with torch.no_grad():
             predictions = model(images, cond_fn=cond_fn, cond_start_step=cfg.GGS.start_step, training=False)
 
         pred_pose = predictions["pred_pose"]
-        batch_size = len(translation)
+        pred_rot = pred_pose["R"]
+        pred_tran = pred_pose["T"]
         
         # compute metrics
-        r_error, t_error = 0
+        # r_error = 0
+        # t_error = 0
         for i in range(batch_size):
             pred_RT = np.eye(4)
-            pred_RT[:3, :3] = np.array(pred_pose['R'][i], dtype=np.float32)
-            pred_RT[:3, 3] = np.array(pred_pose['T'][i], dtype=np.float32).reshape(3)
+            pred_RT[:3, :3] = np.array(pred_rot[i].cpu(), dtype=np.float32)
+            pred_RT[:3, 3] = np.array(pred_tran[i].cpu(), dtype=np.float32).reshape(3)
 
             gt_RT = np.eye(4)
-            gt_RT[:3, :3] = np.array(rotation[i], dtype=np.float32)
-            gt_RT[:3, 3] = np.array(translation[i], dtype=np.float32).reshape(3)
+            gt_RT[:3, :3] = np.array(rotation[i].cpu(), dtype=np.float32)
+            gt_RT[:3, 3] = np.array(translation[i].cpu(), dtype=np.float32).reshape(3)
+
+            print(f"pred pose is {pred_RT}")
+            print(f"gt pose is {gt_RT}")
 
             re, te = calc_pose_error(pred_RT, gt_RT, unit='m')
-            r_error += re
-            t_error += te
+            add = calc_add_metric(model_3D_pts=pts, diameter=diameter, pose_pred=pred_RT, pose_target=gt_RT, return_error=True)
+            proj = calc_projection_2d_error(model_3D_pts=pts, pose_pred=pred_RT, pose_targets=gt_RT, K=camK)
 
-        r_error = r_error/batch_size
-        t_error = t_error/batch_size
-
-
-        print(f"    --  Pair Rot   Error (Deg): {rel_rangle_deg.mean():10.2f}")
-        print(f"    --  Pair Trans Error (Deg): {rel_tangle_deg.mean():10.2f}")
-
-        category_error_dict["rError"].extend(rel_rangle_deg.cpu().numpy())
-        category_error_dict["tError"].extend(rel_tangle_deg.cpu().numpy())
+            category_error_dict["r_Error"].append(re)
+            category_error_dict["t_Error"].append(te)
+            category_error_dict["ADD_metric"].append(add)
+            category_error_dict["Proj2D"].append(proj)
     
     return category_error_dict
 

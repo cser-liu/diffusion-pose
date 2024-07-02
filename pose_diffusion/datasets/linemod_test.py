@@ -101,6 +101,14 @@ class lmDataset(Dataset):
         self.min_num_images = min_num_images
         self.foreground_crop = foreground_crop
 
+        self.name2classID = {'ape': 1, "benchvise": 2,  
+                            'cam': 4, "can": 5,
+                            "cat": 6, "driller": 8, 
+                            "duck": 9, "eggbox": 10, 
+                            "glue": 11, "holepuncher": 12, 
+                            "iron": 13, "lamp": 14, "phone": 15,
+            }
+
         self.camK = np.array([
             [572.4114 ,   0.     , 325.2611 ],
             [  0.     , 573.57043, 242.049  ],
@@ -110,9 +118,15 @@ class lmDataset(Dataset):
             # annotation_file = osp.join(self.CO3D_ANNOTATION_DIR, f"{c}_{split_name}.jgz")
             # with gzip.open(annotation_file, "r") as fin:
             #     annotation = json.loads(fin.read())
+            obj_id = self.name2classID[c]
+            model_path = osp.join(self.LM_DIR, "models/models/obj_{:06d}.ply".format(obj_id))
+            self.obj_pointcloud = py3d_io.load_ply(model_path)[0].numpy()
+            model_file = osp.join(self.LM_DIR, f'models/models/models_info.json')
+            with open(model_file, 'r') as f:
+                self.model_info = json.load(f)
 
-            model_path = osp.join(self.LM_DIR, f"LINEMOD/models/{c}.ply")
-            obj_pointcloud = py3d_io.load_ply(model_path)[0].numpy()
+            self.obj_model_info = self.model_info[str(obj_id)]
+            self.diameter = self.obj_model_info['diameter'] * 1e-3
 
             obj_path = osp.join(self.LM_DIR, f"LINEMOD/objects/{c}")
             pose_dir = osp.join(obj_path, "pose")
@@ -125,14 +139,8 @@ class lmDataset(Dataset):
                 counter += 1
 
                 pose_path = osp.join(pose_dir, "{:04d}.txt".format(seq_id))
-
-                with open(pose_path, 'r') as f:
-                    txtdata = f.readlines()
-                    print(txtdata)
-                    data = []
-                    for _line in txtdata:
-                        data.append(list(map(float, _line.strip().split(' '))))
-                    data = np.stack(data, axis=0)
+                data = np.loadtxt(pose_path)
+            
                 seq_pose = np.array(data, dtype=np.float32).reshape(4, 4)
                 R = seq_pose[:3, :3]
                 T = seq_pose[:3, 3].reshape(3)
@@ -145,7 +153,6 @@ class lmDataset(Dataset):
                 seq_info = {
                     "rgb_path": rgb_path,
                     "mask_path": mask_path,  
-                    "pts": obj_pointcloud,
                     "T": T,
                     "R": R,
                     "cam": self.camK,
@@ -273,19 +280,19 @@ class lmDataset(Dataset):
                 mask = Image.fromarray(np.array(mask) > 125)
                 image = Image.composite(image, white_image, mask)
 
-            images.append(image)
+            images.append(self.transform(image))
             rotations.append(torch.tensor(anno["R"]))
             translations.append(torch.tensor(anno["T"]))
             # focal_lengths.append(torch.tensor(anno["focal_length"]))
             # principal_points.append(torch.tensor(anno["principal_point"]))
             image_paths.append(image_path)
-            pts.append(anno["pts"])
+            # pts.append(anno["pts"])
             
         batch = {}
 
-        batch["R"] = rotations
-        batch["T"] = translations
-        batch["pts"] = pts
+        batch["R"] = torch.stack(rotations)
+        batch["T"] = torch.stack(translations)
+        # batch["pts"] = torch.stack(pts)
 
         if self.transform is not None:
             images = torch.stack(images)
