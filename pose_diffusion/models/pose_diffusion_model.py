@@ -76,7 +76,9 @@ class PoseDiffusionModel(nn.Module):
 
     def forward(
         self,
-        image: torch.Tensor,
+        query_image: torch.Tensor,
+        ref_image: torch.Tensor,
+        ref_pose = {},
         gt_pose = {},
         gt_cameras: Optional[CamerasBase] = None,
         sequence_name: Optional[List[str]] = None,
@@ -103,6 +105,8 @@ class PoseDiffusionModel(nn.Module):
         Returns:
             PerspectiveCameras: PyTorch3D camera object.
         """
+
+        image = torch.cat([query_image, ref_image], dim=0)
 
         shapelist = list(image.shape)
         batch_num = shapelist[0]
