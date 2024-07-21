@@ -207,9 +207,12 @@ def _train_or_eval_fn(
             'T': ref_T
         }
 
-        cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/query.jpg", query_image[0].transpose(1, 2, 0)*255)
-        for i in range(ref_images.shape[1]):
-            cv2.imwrite(f"/scratch/liudan/PoseDiffusion/images/ref_{i}.jpg", ref_images[0][i].transpose(1, 2, 0)*255)
+        print(query_image.shape)
+        print(ref_images.shape)
+        for j in range(query_image.shape[0]):
+            cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_query.jpg", np.array(query_image[j].cpu()).transpose(1, 2, 0)*255)
+            for i in range(ref_images.shape[1]):
+                cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_ref_{i}.jpg", np.array(ref_images[j][i].cpu()).transpose(1, 2, 0)*255)
         exit(0)
 
         if training:
@@ -218,7 +221,7 @@ def _train_or_eval_fn(
             loss = predictions["loss"]
         else:
             with torch.no_grad():
-                predictions = model(images, training=False)
+                predictions = model(query_image, ref_images, training=False)
 
         pred_pose = predictions["pred_pose"] # object pose
 

@@ -66,10 +66,10 @@ class YcbvDataset(Dataset):
         
         if split == "train":
             split_name = "train_pbr"
-            self.scenes = [f"{i:06d}" for i in range(10)]
+            self.scenes = [f"{i:06d}" for i in range(1)]
         elif split == "test":
             split_name = "test"
-            self.scenes = [f"{i:06d}" for i in range(50, 60)]
+            self.scenes = [f"{i:06d}" for i in range(50, 51)]
 
         self.cat_ids = [cat_id for cat_id, obj_name in id2obj.items()]
         self.cat2label = {v: i for i, v in enumerate(self.cat_ids)}  # id_map
@@ -266,12 +266,14 @@ class YcbvDataset(Dataset):
         ids = np.random.choice(ref_len, self.ref_images_num, replace=False)
 
         data_dict['query_image'] = {}
+        data_dict['ref_images'] = {}
 
         query_rgb_path = query_image['rgb_path']
         query_bbox = query_image['bbox']
         query_R = query_image['R']
         query_T = query_image['T']
 
+        # todo filter some bad images
         image = Image.open(query_rgb_path).convert("RGB")
         image = transforms.functional.crop(image, top=query_bbox[1], left=query_bbox[0], height=query_bbox[3], width=query_bbox[2])
         image = self.transform(image)
@@ -282,6 +284,9 @@ class YcbvDataset(Dataset):
         data_dict['query_image']['pose'] = torch.tensor(query_pose)
         data_dict['query_image']['R'] = torch.tensor(query_R)
         data_dict['query_image']['T'] = torch.tensor(query_T)
+
+        # pts = query_image['pts']
+        # data_dict['pts'] = pts
 
         ref_images = []
         ref_poses = []
