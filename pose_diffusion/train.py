@@ -64,8 +64,26 @@ def train_fn(cfg: DictConfig):
     print(f"len of dataset is {len(dataset)}")
     print(f"len of eval_dataset is {len(eval_dataset)}")
 
-    dataloader = get_dataloader(cfg, dataset)
-    eval_dataloader = get_dataloader(cfg, eval_dataset, is_eval=True)
+    # dataloader = get_dataloader(cfg, dataset)
+    # eval_dataloader = get_dataloader(cfg, eval_dataset, is_eval=True)
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size = cfg.train.batch_size,
+        num_workers=cfg.train.num_workers,
+        shuffle = True,
+        pin_memory=cfg.train.pin_memory,
+        persistent_workers=cfg.train.persistent_workers,
+    )
+
+    eval_dataloader = torch.utils.data.DataLoader(
+        eval_dataset,
+        batch_size = cfg.train.batch_size,
+        num_workers=cfg.train.num_workers,
+        shuffle = True,
+        pin_memory=cfg.train.pin_memory,
+        persistent_workers=cfg.train.persistent_workers,
+    )
 
     accelerator.print("length of train dataloader is: ", len(dataloader))
     accelerator.print("length of eval dataloader is: ", len(eval_dataloader))
@@ -172,35 +190,32 @@ def _train_or_eval_fn(
         #     cv2.imwrite(f"/scratch/liudan/PoseDiffusion/images/{i}.jpg", image[i].transpose(1, 2, 0)*255)
         # print(image.shape)
         # data preparation
-        images = batch["image"].to(accelerator.device)
+        query_image = batch['query_image']['image'].to(accelerator.device) # bx3xhxw
+        query_T = batch['query_image']['T'].to(accelerator.device) # bx3
+        query_R = batch['query_image']['R'].to(accelerator.device)# bx3x3
 
-        translation = batch["T"].to(accelerator.device)
-        rotation = batch["R"].to(accelerator.device)
+        ref_images = batch['ref_images']['image'].to(accelerator.device) # bxrx3xhxw
+        ref_T = batch['ref_images']['T'].to(accelerator.device) # bxrx3
+        ref_R = batch['ref_images']['R'].to(accelerator.device) # bxrx3x3
 
-        if training and cfg.train.batch_repeat > 0:
-            # repeat samples by several times
-            # to accelerate training
-            br = cfg.train.batch_repeat
-            gt_pose = {
-                "R": rotation.reshape(-1, 3, 3).repeat(br, 1, 1),
-                "T": translation.reshape(-1, 3).repeat(br, 1),
-            }
-            # gt_pose = gt_pose.to(accelerator.device)
-            batch_size = len(images) * br
-        else:
-            gt_pose = {
-                "R": rotation.reshape(-1, 3, 3),
-                "T": translation.reshape(-1, 3),
-            }
-            # gt_pose = gt_pose.to(accelerator.device)
-            batch_size = len(images)
-        # print(f"batch size is {batch_size}")
+        query_pose = {
+            'R': query_R,
+            'T': query_T
+        }
+        ref_pose = {
+            'R': ref_R,
+            'T': ref_T
+        }
+
+        cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/query.jpg", query_image[0].transpose(1, 2, 0)*255)
+        for i in range(ref_images.shape[1]):
+            cv2.imwrite(f"/scratch/liudan/PoseDiffusion/images/ref_{i}.jpg", ref_images[0][i].transpose(1, 2, 0)*255)
+        exit(0)
 
         if training:
-            predictions = model(images, gt_pose=gt_pose, training=True, batch_repeat=cfg.train.batch_repeat)
+            predictions = model(query_image, ref_images, query_pose, ref_pose, training=True)
             predictions["loss"] = predictions["loss"].mean()
             loss = predictions["loss"]
-            # accelerator.print(f"loss is {loss}")
         else:
             with torch.no_grad():
                 predictions = model(images, training=False)
@@ -246,6 +261,7 @@ def get_dataloader(cfg, dataset, is_eval=False):
     print(f"The length of dataset is {len(dataset)}")
 
     prefix = "eval" if is_eval else "train"
+    
     batch_sampler = DynamicBatchSampler(
         len(dataset),
         dataset_len=getattr(cfg.train, f"len_{prefix}"),

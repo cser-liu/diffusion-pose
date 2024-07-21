@@ -36,6 +36,7 @@ class YcbvDataset(Dataset):
     def __init__(
         self,
         split="train",
+        category=None,
         transform=None,
         debug=False,
         random_aug=True,
@@ -43,6 +44,7 @@ class YcbvDataset(Dataset):
         jitter_trans=[-0.07, 0.07],
         min_num_images=50,
         img_size=224,
+        ref_images_num=16,
         eval_time=False,
         normalize_cameras=False,
         first_camera_transform=True,
@@ -64,10 +66,10 @@ class YcbvDataset(Dataset):
         
         if split == "train":
             split_name = "train_pbr"
-            self.scenes = [f"{i:06d}" for i in range(50)]
+            self.scenes = [f"{i:06d}" for i in range(10)]
         elif split == "test":
             split_name = "test"
-            self.scenes = [f"{i:06d}" for i in range(48, 50)]
+            self.scenes = [f"{i:06d}" for i in range(50, 60)]
 
         self.cat_ids = [cat_id for cat_id, obj_name in id2obj.items()]
         self.cat2label = {v: i for i, v in enumerate(self.cat_ids)}  # id_map
@@ -75,10 +77,11 @@ class YcbvDataset(Dataset):
         # /scratch/liudan/data/ycbv/...
         self.data_dir = os.path.join(YCBV_DIR, split_name)
         
-        self.rotations = {}
-        self.category_map = {}
+        self.obj_data = {}
+        self.all_data = []
 
         for scene in tqdm(self.scenes):
+            # scene information
             scene_id = int(scene)
             scene_root = osp.join(self.data_dir, scene)
             with open(osp.join(scene_root, "scene_gt.json"), "r") as f:
@@ -88,8 +91,6 @@ class YcbvDataset(Dataset):
             with open(osp.join(scene_root, "scene_camera.json"), "r") as f_cam:
                 cam_dict = json.load(f_cam)
 
-            # gt_info_dict = mmcv.load(osp.join(scene_root, "scene_gt_info.json"))
-            # cam_dict = mmcv.load(osp.join(scene_root, "scene_camera.json"))
 
             for str_im_id in tqdm(gt_dict, postfix=f"{scene_id}"):
                 int_im_id = int(str_im_id)
@@ -100,25 +101,13 @@ class YcbvDataset(Dataset):
                     rgb_path = osp.join(scene_root, "rgb/{:06d}.png").format(int_im_id)
                 assert osp.exists(rgb_path), rgb_path
 
-                depth_path = osp.join(scene_root, "depth/{:06d}.png".format(int_im_id))
-
-                scene_im_id = f"{scene_id}/{int_im_id}"
+                # depth_path = osp.join(scene_root, "depth/{:06d}.png".format(int_im_id))
                 
-
                 K = np.array(cam_dict[str_im_id]["cam_K"], dtype=np.float32)
                 focal_length = np.array([K[0], K[4]], dtype=np.float32)
                 principal_point = np.array([K[2], K[5]], dtype=np.float32)
 
-                depth_factor = 1000.0 / cam_dict[str_im_id]["depth_scale"]  # 10000
-                
-                image_info = {
-                    "rgb_path": rgb_path,
-                    "depth_path": depth_path,
-                    "image_id": int_im_id,
-                    "scene_im_id": scene_im_id,  # for evaluation
-                    "cam": K,
-                    "depth_factor": depth_factor,
-                }
+                depth_factor = cam_dict[str_im_id]["depth_scale"]  
 
                 for anno_i, anno in enumerate(gt_dict[str_im_id]):
                     obj_id = anno["obj_id"]
@@ -126,24 +115,18 @@ class YcbvDataset(Dataset):
                         continue
 
                     self.obj_ply_path = osp.join(YCBV_DIR, "models/obj_{:06d}.ply".format(obj_id))
-                    self.obj_pointcloud = py3d_io.load_ply(self.obj_ply_path)[0].numpy()  # convert to m
+                    self.obj_pointcloud = py3d_io.load_ply(self.obj_ply_path)[0].numpy()  
 
-                    scene_obj_id = f"scene{scene_id}_obj{obj_id}"
-                    self.category_map[scene_obj_id] = id2obj[obj_id]
+                    # scene_obj_id = f"scene{scene_id}_obj{obj_id}"
+                    obj_class = id2obj[obj_id]
 
-                    if scene_obj_id not in self.rotations.keys():
-                        self.rotations[scene_obj_id] = []
-
-                    # cur_label = self.cat2label[obj_id]  # 0-based label
+                    if obj_id not in self.obj_data.keys():
+                        self.obj_data[obj_id] = []
 
                     R = np.array(anno["cam_R_m2c"], dtype="float32").reshape(3, 3)
-                    t = np.array(anno["cam_t_m2c"], dtype="float32") / 1000.0
+                    t = np.array(anno["cam_t_m2c"], dtype="float32") 
 
-                    pose = np.hstack([R, t.reshape(3, 1)])  #3x4
-                    # quat = mat2quat(R).astype("float32")
-
-                    # proj = (image_info["cam"] @ t.T).T
-                    # proj = proj[:2] / proj[2]
+                    pose = np.hstack([R, t.reshape(3, 1)])  # 3x4
 
                     bbox_visib = gt_info_dict[str_im_id][anno_i]["bbox_visib"]
                     bbox_obj = gt_info_dict[str_im_id][anno_i]["bbox_obj"]
@@ -157,15 +140,13 @@ class YcbvDataset(Dataset):
                     assert osp.exists(mask_file), mask_file
                     assert osp.exists(mask_visib_file), mask_visib_file
 
-                    # xyz_path = osp.join(self.xyz_root, f"{scene_id:06d}/{int_im_id:06d}_{anno_i:06d}-xyz.pkl")
-                    # assert osp.exists(xyz_path), xyz_path
 
-                    inst = {
+                    obj_info = {
                         "rgb_path": rgb_path,
-                        "depth_path": depth_path,
+                        # "depth_path": depth_path,
                         "mask_path": mask_file,
                         "mask_visib_path": mask_visib_file,    
-                        "category_id": obj_id,  
+                        "obj_id": obj_id,  
                         "bbox_visib": bbox_visib,  # x, y, w, h
                         "bbox": bbox_obj,
                         "pose": pose,
@@ -175,23 +156,21 @@ class YcbvDataset(Dataset):
                         "pts": self.obj_pointcloud,
                         "focal_length": focal_length,
                         "principal_point": principal_point,
-                        "depth_scale": depth_factor,
-                        # "centroid_2d": proj,  # absolute (cx, cy)
-                        
+                        "depth_scale": depth_factor,                   
                     }
-                    inst["image"] = image_info
 
-                    self.rotations[scene_obj_id].append(inst)
+                    self.obj_data[obj_id].append(obj_info)
+                    self.all_data.append(obj_info)
 
-        self.sequence_list = list(self.rotations.keys())
-        # print(f"sequence nums: {self.sequence_list}")
+        self.sequence_list = list(self.obj_data.keys())
+        print(f"sequence nums: {self.sequence_list}")
         
-        self.center_box = center_box
-        self.crop_longest = crop_longest
-        self.min_num_images = min_num_images            
+        # self.center_box = center_box
+        # self.crop_longest = crop_longest
+        # self.min_num_images = min_num_images            
 
-        self.debug = debug
-        self.sort_by_filename = sort_by_filename
+        # self.debug = debug
+        # self.sort_by_filename = sort_by_filename
 
         if transform is None:
             self.transform = transforms.Compose(
@@ -210,6 +189,7 @@ class YcbvDataset(Dataset):
             self.jitter_scale = [1, 1]
             self.jitter_trans = [0, 0]
 
+        self.ref_images_num = ref_images_num
         self.img_size = img_size
         self.eval_time = eval_time
         self.normalize_cameras = normalize_cameras
@@ -236,7 +216,7 @@ class YcbvDataset(Dataset):
         print(f"Data size: {len(self)}")
 
     def __len__(self):
-        return len(self.sequence_list)
+        return len(self.all_data)
 
     def _jitter_bbox(self, bbox):
         # Random aug to cropping box shape
@@ -264,7 +244,7 @@ class YcbvDataset(Dataset):
 
         return image_crop
 
-    def __getitem__(self, idx_N):
+    # def __getitem__(self, idx_N):
         """Fetch item by index and a dynamic variable n_per_seq."""
 
         # Different from most pytorch datasets,
@@ -276,8 +256,63 @@ class YcbvDataset(Dataset):
         metadata = self.rotations[sequence_name]
         ids = np.random.choice(len(metadata), n_per_seq, replace=False)
         return self.get_data(index=index, ids=ids)
+    
+    def __getitem__(self, idx):
+        data_dict = dict()
 
-    def get_data(self, index=None, sequence_name=None, ids=(0, 1), no_images=False, return_path = False):
+        query_image = self.all_data[idx]
+        cur_obj = query_image['obj_id']
+        ref_len = len(self.obj_data[cur_obj])
+        ids = np.random.choice(ref_len, self.ref_images_num, replace=False)
+
+        data_dict['query_image'] = {}
+
+        query_rgb_path = query_image['rgb_path']
+        query_bbox = query_image['bbox']
+        query_R = query_image['R']
+        query_T = query_image['T']
+
+        image = Image.open(query_rgb_path).convert("RGB")
+        image = transforms.functional.crop(image, top=query_bbox[1], left=query_bbox[0], height=query_bbox[3], width=query_bbox[2])
+        image = self.transform(image)
+
+        query_pose = query_image['pose']
+
+        data_dict['query_image']['image'] = torch.tensor(image)
+        data_dict['query_image']['pose'] = torch.tensor(query_pose)
+        data_dict['query_image']['R'] = torch.tensor(query_R)
+        data_dict['query_image']['T'] = torch.tensor(query_T)
+
+        ref_images = []
+        ref_poses = []
+        ref_Rs = []
+        ref_Ts = []
+        for i in ids:
+            ref = self.obj_data[cur_obj][i]
+            ref_rgb_path = ref['rgb_path']
+            ref_bbox = ref['bbox']
+            ref_pose = ref['pose']
+            ref_R = ref['R']
+            ref_T = ref['T']
+            ref_image = Image.open(ref_rgb_path).convert("RGB")
+            ref_image = transforms.functional.crop(ref_image, top=ref_bbox[1], left=ref_bbox[0], height=ref_bbox[3], width=ref_bbox[2])
+            ref_image = self.transform(ref_image)
+
+            ref_images.append(torch.tensor(ref_image)) # 3xHxW
+            ref_poses.append(torch.tensor(ref_pose))
+            ref_Rs.append(torch.tensor(ref_R)) # 3x3
+            ref_Ts.append(torch.tensor(ref_T)) # 3
+
+        data_dict['ref_images']['image'] = torch.stack(ref_images)
+        data_dict['ref_images']['pose'] = torch.stack(ref_poses)
+        data_dict['ref_images']['R'] = torch.stack(ref_Rs)
+        data_dict['ref_images']['T'] = torch.stack(ref_Ts)
+
+        return data_dict
+
+        
+
+    # def get_data_1(self, index=None, sequence_name=None, ids=(0, 1), no_images=False, return_path = False):
         if sequence_name is None:
             sequence_name = self.sequence_list[index]
         metadata = self.rotations[sequence_name]
@@ -346,6 +381,7 @@ class YcbvDataset(Dataset):
 
 
             bbox_xywh = torch.FloatTensor(bbox_xyxy_to_xywh(bbox_jitter))
+            
             (focal_length_cropped, principal_point_cropped) = adjust_camera_to_bbox_crop_(
                 focal_lengths[i], principal_points[i], torch.FloatTensor(image.size), bbox_xywh
             )
