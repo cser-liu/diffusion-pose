@@ -3,6 +3,7 @@ import json
 import os.path as osp
 import random
 import os 
+import cv2
 
 import numpy as np
 import torch
@@ -24,6 +25,7 @@ from tqdm import tqdm
 import mmcv
 
 from util.camera_transform import adjust_camera_to_bbox_crop_, adjust_camera_to_image_scale_, bbox_xyxy_to_xywh
+from util.data_utils import get_image_crop_resize, get_K_crop_resize
 
 import matplotlib.pyplot as plt
 
@@ -132,7 +134,7 @@ class YcbvDataset(Dataset):
                     bbox_obj = gt_info_dict[str_im_id][anno_i]["bbox_obj"]
                     x1, y1, w, h = bbox_visib
 
-                    if h <= 1 or w <= 1:
+                    if h <= 10 or w <= 10:
                         continue
                     
                     mask_file = osp.join(scene_root, "mask/{:06d}_{:06d}.png".format(int_im_id, anno_i))
@@ -152,7 +154,7 @@ class YcbvDataset(Dataset):
                         "pose": pose,
                         "T": t,
                         "R": R,
-                        "cam": K.reshape(3, 3),
+                        "cam_K": K.reshape(3, 3),
                         "pts": self.obj_pointcloud,
                         "focal_length": focal_length,
                         "principal_point": principal_point,
@@ -272,15 +274,34 @@ class YcbvDataset(Dataset):
         query_bbox = query_image['bbox']
         query_R = query_image['R']
         query_T = query_image['T']
+        K = query_image['cam_K']
 
-        # todo filter some bad images
-        image = Image.open(query_rgb_path).convert("RGB")
-        image = transforms.functional.crop(image, top=query_bbox[1], left=query_bbox[0], height=query_bbox[3], width=query_bbox[2])
-        image = self.transform(image)
+        # todo: filter some bad images
+        # image = Image.open(query_rgb_path).convert("RGB")
+        # image = transforms.functional.crop(image, top=query_bbox[1], left=query_bbox[0], height=query_bbox[3], width=query_bbox[2])
+        # image = self.transform(image)
+
+        original_img = cv2.imread(query_rgb_path)
+        img_h,img_w = original_img.shape[:2]
+        x0, y0, w, h = query_bbox
+        x1 = x0 + w
+        y1 = y0 + h
+
+        # Crop image by 2D visible bbox, and change K
+        box = np.array([x0, y0, x1, y1])
+        resize_shape = np.array([y1 - y0, x1 - x0])
+        K_crop, K_crop_homo = get_K_crop_resize(box, K, resize_shape)
+        image_crop, _ = get_image_crop_resize(original_img, box, resize_shape)
+
+        box_new = np.array([0, 0, x1 - x0, y1 - y0])
+        resize_shape = np.array([256, 256])
+        K_crop, K_crop_homo = get_K_crop_resize(box_new, K_crop, resize_shape)
+        image_crop, _ = get_image_crop_resize(image_crop, box_new, resize_shape)
+
 
         query_pose = query_image['pose']
 
-        data_dict['query_image']['image'] = torch.tensor(image)
+        data_dict['query_image']['image'] = torch.tensor(image_crop)
         data_dict['query_image']['pose'] = torch.tensor(query_pose)
         data_dict['query_image']['R'] = torch.tensor(query_R)
         data_dict['query_image']['T'] = torch.tensor(query_T)
@@ -299,11 +320,29 @@ class YcbvDataset(Dataset):
             ref_pose = ref['pose']
             ref_R = ref['R']
             ref_T = ref['T']
-            ref_image = Image.open(ref_rgb_path).convert("RGB")
-            ref_image = transforms.functional.crop(ref_image, top=ref_bbox[1], left=ref_bbox[0], height=ref_bbox[3], width=ref_bbox[2])
-            ref_image = self.transform(ref_image)
+            K = ref['cam_K']
 
-            ref_images.append(torch.tensor(ref_image)) # 3xHxW
+            # ref_image = Image.open(ref_rgb_path).convert("RGB")
+            # ref_image = transforms.functional.crop(ref_image, top=ref_bbox[1], left=ref_bbox[0], height=ref_bbox[3], width=ref_bbox[2])
+            # ref_image = self.transform(ref_image)
+
+            original_img = cv2.imread(ref_rgb_path)
+            x0, y0, w, h = ref_bbox
+            x1 = x0 + w
+            y1 = y0 + h
+
+            # Crop image by 2D visible bbox, and change K
+            box = np.array([x0, y0, x1, y1])
+            resize_shape = np.array([y1 - y0, x1 - x0])
+            K_crop, K_crop_homo = get_K_crop_resize(box, K, resize_shape)
+            image_crop, _ = get_image_crop_resize(original_img, box, resize_shape)
+
+            box_new = np.array([0, 0, x1 - x0, y1 - y0])
+            resize_shape = np.array([256, 256])
+            K_crop, K_crop_homo = get_K_crop_resize(box_new, K_crop, resize_shape)
+            image_crop, _ = get_image_crop_resize(image_crop, box_new, resize_shape)
+
+            ref_images.append(torch.tensor(image_crop)) # 3xHxW
             ref_poses.append(torch.tensor(ref_pose))
             ref_Rs.append(torch.tensor(ref_R)) # 3x3
             ref_Ts.append(torch.tensor(ref_T)) # 3
