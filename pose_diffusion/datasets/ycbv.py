@@ -78,6 +78,7 @@ class YcbvDataset(Dataset):
 
         # /scratch/liudan/data/ycbv/...
         self.data_dir = os.path.join(YCBV_DIR, split_name)
+        self.add_detector_noise = False
         
         self.obj_data = {}
         self.all_data = []
@@ -287,6 +288,26 @@ class YcbvDataset(Dataset):
         x1 = x0 + w
         y1 = y0 + h
 
+        if not self.add_detector_noise:
+            compact_percent = 0.3
+            x0 -= int(w * compact_percent)
+            y0 -= int(h * compact_percent)
+            x1 += int(w * compact_percent)
+            y1 += int(h * compact_percent)
+        else:
+            compact_percent = 0.3
+            offset_percent = np.random.uniform(low=-1*compact_percent, high=1*compact_percent)
+            # apply compact noise:
+            x0 -= int(w * compact_percent)
+            y0 -= int(h * compact_percent)
+            x1 += int(w * compact_percent)
+            y1 += int(h * compact_percent)
+            # apply offset noise:
+            x0 += int(w * offset_percent)
+            y0 += int(h * offset_percent)
+            x1 += int(w * offset_percent)
+            y1 += int(h * offset_percent)
+
         # Crop image by 2D visible bbox, and change K
         box = np.array([x0, y0, x1, y1])
         resize_shape = np.array([y1 - y0, x1 - x0])
@@ -330,6 +351,26 @@ class YcbvDataset(Dataset):
             x0, y0, w, h = ref_bbox
             x1 = x0 + w
             y1 = y0 + h
+
+            if not self.add_detector_noise:
+                compact_percent = 0.1
+                x0 -= int(w * compact_percent)
+                y0 -= int(h * compact_percent)
+                x1 += int(w * compact_percent)
+                y1 += int(h * compact_percent)
+            else:
+                compact_percent = 0.1
+                offset_percent = np.random.uniform(low=-1*compact_percent, high=1*compact_percent)
+                # apply compact noise:
+                x0 -= int(w * compact_percent)
+                y0 -= int(h * compact_percent)
+                x1 += int(w * compact_percent)
+                y1 += int(h * compact_percent)
+                # apply offset noise:
+                x0 += int(w * offset_percent)
+                y0 += int(h * offset_percent)
+                x1 += int(w * offset_percent)
+                y1 += int(h * offset_percent)
 
             # Crop image by 2D visible bbox, and change K
             box = np.array([x0, y0, x1, y1])

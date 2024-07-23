@@ -53,7 +53,7 @@ class lmDataset(Dataset):
         center_box=False,
         sort_by_filename=False,
         compute_optical=False,
-        color_aug=True,
+        color_aug=False,
         erase_aug=False,
     ):
         """
@@ -101,6 +101,8 @@ class lmDataset(Dataset):
         self.min_num_images = min_num_images
         self.foreground_crop = foreground_crop
         self.to_meter_scale = 1e-3
+        self.add_detector_noise = False
+        self.use_yolo_box = True
 
         self.name2classID = {'ape': 1, "benchvise": 2,  
                             'cam': 4, "can": 5,
@@ -117,6 +119,8 @@ class lmDataset(Dataset):
 
         for c in category:
             obj_id = self.name2classID[c]
+
+
             model_path = osp.join(self.LM_DIR, f"lm_full/lm_full/models/{c}/{c}.ply")
             self.obj_pointcloud = py3d_io.load_ply(model_path)[0].numpy() * self.to_meter_scale
             model_file = osp.join(self.LM_DIR, f'models/models/models_info.json')
@@ -151,22 +155,60 @@ class lmDataset(Dataset):
                 rgb_path = osp.join(obj_path, "{:06d}-color.png".format(seq_id))
                 mask_path = osp.join(mask_dir, "{:04d}.png".format(seq_id))
 
-                # bbox_path = osp.join(bbox_dir, "{:06d}.txt".format(seq_id))
-                bbox_path = osp.join(obj_path, "{:06d}-box_fasterrcnn.txt".format(seq_id))
-                if osp.exists(bbox_path):
-                    yolo_box = np.loadtxt(bbox_path) * self.to_meter_scale
-                    # x0_n, y0_n, x1_n, y1_n = yolo_box
-                    x_c_n, y_c_n, w_n, h_n = yolo_box
-                    x0_n, y0_n = x_c_n - w_n / 2, y_c_n - h_n / 2
-                    x1_n, y1_n = x_c_n + w_n / 2, y_c_n + h_n / 2
+                bbox_path = osp.join(bbox_dir, "{:06d}.txt".format(seq_id))
+                # bbox_path = osp.join(obj_path, "{:06d}-box_fasterrcnn.txt".format(seq_id))
+                if self.use_yolo_box:
+                    yolo_box = np.loadtxt(osp.join(bbox_path))
+                    assert yolo_box.shape[0] != 0, f"img id:{seq_id} no box detected!"
+                    if len(yolo_box.shape) == 2:
+                        want_id = np.argsort(yolo_box[:,5])[0]
+                        yolo_box = yolo_box[want_id]
+                
+                    x_c_n, y_c_n, w_n, h_n = yolo_box[1:5]
+                    x0_n, y0_n = x_c_n - w_n / 2, y_c_n - h_n /2
 
+                    x0, y0, w, h = int(x0_n * img_w), int(y0_n * img_h), int(w_n * img_w), int(h_n * img_h)
+                    x1, y1 = x0 + w, y0 + h
+
+                else:
+                    # Use GT box
+                    x0, y0, w, h = (
+                        np.loadtxt(
+                            osp.join(image_seq_dir, "-".join([dataset_img_id, "box"]) + ".txt")
+                        )
+                        .astype(np.int)
+                        .tolist()
+                    )
+                    x1, y1 = x0 + w, y0 + h
+
+                if not self.add_detector_noise:
+                    compact_percent = 0.3
+                    x0 -= int(w * compact_percent)
+                    y0 -= int(h * compact_percent)
+                    x1 += int(w * compact_percent)
+                    y1 += int(h * compact_percent)
+                else:
+                    compact_percent = 0.3
+                    offset_percent = np.random.uniform(low=-1*compact_percent, high=1*compact_percent)
+                    # apply compact noise:
+                    x0 -= int(w * compact_percent)
+                    y0 -= int(h * compact_percent)
+                    x1 += int(w * compact_percent)
+                    y1 += int(h * compact_percent)
+                    # apply offset noise:
+                    x0 += int(w * offset_percent)
+                    y0 += int(h * offset_percent)
+                    x1 += int(w * offset_percent)
+                    y1 += int(h * offset_percent)
+                
                 seq_info = {
                     "rgb_path": rgb_path,
                     "mask_path": mask_path,  
                     "T": T,
                     "R": R,
                     "cam": self.camK,
-                    "yolo_bbox": np.array([x0_n, y0_n, x1_n, y1_n])
+                    # "yolo_bbox": np.array([x0_n, y0_n, x1_n, y1_n])
+                    "yolo_bbox": np.array([0, 0, 1.0, 1.0])
                 }
 
                 self.rotations[c].append(seq_info)
@@ -292,12 +334,12 @@ class lmDataset(Dataset):
                 image = Image.composite(image, white_image, mask)
 
             # print(image.size)
-            img_hei, img_wid = image.size[:2]
+            img_hei, img_wid = image.size
             x0_n, y0_n, x1_n, y1_n = anno["yolo_bbox"]
             x0_n, x1_n = x0_n * img_wid, x1_n * img_wid
             y0_n, y1_n = y0_n * img_hei, y1_n * img_hei
             
-            bbox_xyxy = np.array([x0_n, y0_n, x1_n, y1_n], dtype = "int")
+            bbox_xyxy = np.array([x0_n, y0_n, x1_n, y1_n])
             print(bbox_xyxy)
             # bbox_xywh = torch.FloatTensor(bbox_xyxy_to_xywh(bbox_xyxy))
             image = self._crop_image(image, bbox_xyxy, white_bg=self.mask_images)
@@ -369,6 +411,6 @@ TRAINING_CATEGORIES = [
     "phone"
 ]
 
-TEST_CATEGORIES = ["cat"]
+TEST_CATEGORIES = ["phone"]
 
 DEBUG_CATEGORIES = []
