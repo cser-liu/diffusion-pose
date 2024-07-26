@@ -185,16 +185,12 @@ def _train_or_eval_fn(
     stat_set = "train" if training else "eval"
 
     for step, batch in enumerate(dataloader):  
-        # image = np.array(batch["image"][0])      
-        # for i in range(image.shape[0]):
-        #     cv2.imwrite(f"/scratch/liudan/PoseDiffusion/images/{i}.jpg", image[i].transpose(1, 2, 0)*255)
-        # print(image.shape)
         # data preparation
-        query_image = batch['query_image']['image'].to(accelerator.device) # bx3xhxw
+        query_image = batch['query_image']['image'].permute(0, 3, 1, 2).to(accelerator.device) # bx3xhxw
         query_T = batch['query_image']['T'].to(accelerator.device) # bx3
         query_R = batch['query_image']['R'].to(accelerator.device)# bx3x3
 
-        ref_images = batch['ref_images']['image'].to(accelerator.device) # bxrx3xhxw
+        ref_images = batch['ref_images']['image'].permute(0 ,1, 4, 2, 3).to(accelerator.device) # bxrx3xhxw
         ref_T = batch['ref_images']['T'].to(accelerator.device) # bxrx3
         ref_R = batch['ref_images']['R'].to(accelerator.device) # bxrx3x3
 
@@ -207,13 +203,10 @@ def _train_or_eval_fn(
             'T': ref_T
         }
 
-        print(query_image.shape)
-        print(ref_images.shape)
-        for j in range(query_image.shape[0]):
-            cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_query.jpg", np.array(query_image[j].cpu()).transpose(1, 2, 0)*255)
-            for i in range(ref_images.shape[1]):
-                cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_ref_{i}.jpg", np.array(ref_images[j][i].cpu()).transpose(1, 2, 0)*255)
-        exit(0)
+        # for j in range(query_image.shape[0]):
+        #     cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_query.jpg", np.array(query_image[j].cpu()))
+        #     for i in range(ref_images.shape[1]):
+        #         cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_ref_{i}.jpg", np.array(ref_images[j][i].cpu()))
 
         if training:
             predictions = model(query_image, ref_images, query_pose, ref_pose, training=True)
@@ -221,27 +214,9 @@ def _train_or_eval_fn(
             loss = predictions["loss"]
         else:
             with torch.no_grad():
-                predictions = model(query_image, ref_images, training=False)
+                predictions = model(query_image, ref_images, query_pose, training=False)
 
         pred_pose = predictions["pred_pose"] # object pose
-
-        
-
-        if visualize:
-            # an example if trying to conduct visualization by visdom
-            frame_num = images.shape[1]
-
-            camera_dict = {"pred_cameras": {}, "gt_cameras": {}}
-
-            for visidx in range(frame_num):
-                camera_dict["pred_cameras"][visidx] = pred_cameras[visidx]
-                camera_dict["gt_cameras"][visidx] = gt_cameras[visidx]
-
-            fig = plotly_scene_visualization(camera_dict, frame_num)
-            viz.plotlyplot(fig, env=cfg.exp_name, win="cams")
-
-            show_img = view_color_coded_images_for_visdom(images[0])
-            viz.images(show_img, env=cfg.exp_name, win="imgs")
 
         stats.update(predictions, time_start=time_start, stat_set=stat_set)
         if step % cfg.train.print_interval == 0:

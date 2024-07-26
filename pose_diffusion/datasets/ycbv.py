@@ -38,26 +38,12 @@ class YcbvDataset(Dataset):
     def __init__(
         self,
         split="train",
-        category=None,
         transform=None,
-        debug=False,
-        random_aug=True,
-        jitter_scale=[0.8, 1.0],
-        jitter_trans=[-0.07, 0.07],
-        min_num_images=50,
         img_size=224,
         ref_images_num=16,
         eval_time=False,
-        normalize_cameras=False,
-        first_camera_transform=True,
         mask_images=True,
         YCBV_DIR=None,
-        center_box=False,
-        crop_longest=False,
-        sort_by_filename=False,
-        compute_optical=False,
-        color_aug=True,
-        erase_aug=False,
     ):
         
         self.ycbv_DIR = YCBV_DIR
@@ -67,17 +53,14 @@ class YcbvDataset(Dataset):
 
         
         if split == "train":
-            split_name = "train_pbr"
-            self.scenes = [f"{i:06d}" for i in range(1)]
+            self.category = [i for i in range(1, 21)]
         elif split == "test":
-            split_name = "test"
-            self.scenes = [f"{i:06d}" for i in range(50, 51)]
-
-        self.cat_ids = [cat_id for cat_id, obj_name in id2obj.items()]
-        self.cat2label = {v: i for i, v in enumerate(self.cat_ids)}  # id_map
+            self.category = [21]
 
         # /scratch/liudan/data/ycbv/...
-        self.data_dir = os.path.join(YCBV_DIR, split_name)
+        self.data_dir = os.path.join(YCBV_DIR, "train_pbr")
+
+        self.scenes = [f"{i:06d}" for i in range(1)]
         self.add_detector_noise = False
         
         self.obj_data = {}
@@ -98,10 +81,7 @@ class YcbvDataset(Dataset):
             for str_im_id in tqdm(gt_dict, postfix=f"{scene_id}"):
                 int_im_id = int(str_im_id)
                 # int_im_id: 000000 - 000999
-                if split == "train":
-                    rgb_path = osp.join(scene_root, "rgb/{:06d}.jpg").format(int_im_id)
-                else:
-                    rgb_path = osp.join(scene_root, "rgb/{:06d}.png").format(int_im_id)
+                rgb_path = osp.join(scene_root, "rgb/{:06d}.jpg").format(int_im_id)
                 assert osp.exists(rgb_path), rgb_path
 
                 # depth_path = osp.join(scene_root, "depth/{:06d}.png".format(int_im_id))
@@ -114,7 +94,8 @@ class YcbvDataset(Dataset):
 
                 for anno_i, anno in enumerate(gt_dict[str_im_id]):
                     obj_id = anno["obj_id"]
-                    if obj_id not in self.cat_ids:
+
+                    if obj_id not in self.category:
                         continue
 
                     self.obj_ply_path = osp.join(YCBV_DIR, "models/obj_{:06d}.ply".format(obj_id))
@@ -168,12 +149,6 @@ class YcbvDataset(Dataset):
         self.sequence_list = list(self.obj_data.keys())
         print(f"sequence nums: {self.sequence_list}")
         
-        # self.center_box = center_box
-        # self.crop_longest = crop_longest
-        # self.min_num_images = min_num_images            
-
-        # self.debug = debug
-        # self.sort_by_filename = sort_by_filename
 
         if transform is None:
             self.transform = transforms.Compose(
@@ -185,80 +160,15 @@ class YcbvDataset(Dataset):
         else:
             self.transform = transform
 
-        if random_aug and not eval_time:
-            self.jitter_scale = jitter_scale
-            self.jitter_trans = jitter_trans
-        else:
-            self.jitter_scale = [1, 1]
-            self.jitter_trans = [0, 0]
-
         self.ref_images_num = ref_images_num
         self.img_size = img_size
         self.eval_time = eval_time
-        self.normalize_cameras = normalize_cameras
-        self.first_camera_transform = first_camera_transform
         self.mask_images = mask_images
-        self.compute_optical = compute_optical
-        self.color_aug = color_aug
-        self.erase_aug = erase_aug
-
         
-        if self.color_aug:
-            self.color_jitter = transforms.Compose(
-                [
-                    transforms.RandomApply([transforms.ColorJitter(brightness=0.3, contrast=0.4, saturation=0.2, hue=0.1)], p=0.75),
-                    transforms.RandomGrayscale(p=0.05),
-                    transforms.RandomApply([transforms.GaussianBlur(5, sigma=(0.1, 1.0))], p=0.05),
-                ]
-            )
-
-        if self.erase_aug:
-            self.rand_erase = transforms.RandomErasing(p=0.1, scale=(0.02, 0.05), ratio=(0.3, 3.3), value=0, inplace=False)
-
-
         print(f"Data size: {len(self)}")
 
     def __len__(self):
         return len(self.all_data)
-
-    def _jitter_bbox(self, bbox):
-        # Random aug to cropping box shape
-        
-        bbox = square_bbox(bbox.astype(np.float32))
-        s = np.random.uniform(self.jitter_scale[0], self.jitter_scale[1])
-        tx, ty = np.random.uniform(self.jitter_trans[0], self.jitter_trans[1], size=2)
-
-        side_length = bbox[2] - bbox[0]
-        center = (bbox[:2] + bbox[2:]) / 2 + np.array([tx, ty]) * side_length
-        extent = side_length / 2 * s
-
-        # Final coordinates need to be integer for cropping.
-        ul = (center - extent).round().astype(int)
-        lr = ul + np.round(2 * extent).astype(int)
-        return np.concatenate((ul, lr))
-
-    def _crop_image(self, image, bbox, white_bg=False):
-        if white_bg:
-            # Only support PIL Images
-            image_crop = Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), (255, 255, 255))
-            image_crop.paste(image, (-bbox[0], -bbox[1]))
-        else:
-            image_crop = transforms.functional.crop(image, top=bbox[1], left=bbox[0], height=bbox[3] - bbox[1], width=bbox[2] - bbox[0])
-
-        return image_crop
-
-    # def __getitem__(self, idx_N):
-        """Fetch item by index and a dynamic variable n_per_seq."""
-
-        # Different from most pytorch datasets,
-        # here we not only get index, but also a dynamic variable n_per_seq
-        # supported by DynamicBatchSampler
-
-        index, n_per_seq = idx_N
-        sequence_name = self.sequence_list[index]
-        metadata = self.rotations[sequence_name]
-        ids = np.random.choice(len(metadata), n_per_seq, replace=False)
-        return self.get_data(index=index, ids=ids)
     
     def __getitem__(self, idx):
         data_dict = dict()
@@ -289,13 +199,13 @@ class YcbvDataset(Dataset):
         y1 = y0 + h
 
         if not self.add_detector_noise:
-            compact_percent = 0.3
+            compact_percent = 0.1
             x0 -= int(w * compact_percent)
             y0 -= int(h * compact_percent)
             x1 += int(w * compact_percent)
             y1 += int(h * compact_percent)
         else:
-            compact_percent = 0.3
+            compact_percent = 0.1
             offset_percent = np.random.uniform(low=-1*compact_percent, high=1*compact_percent)
             # apply compact noise:
             x0 -= int(w * compact_percent)
@@ -394,183 +304,6 @@ class YcbvDataset(Dataset):
         data_dict['ref_images']['T'] = torch.stack(ref_Ts)
 
         return data_dict
-
-        
-
-    # def get_data_1(self, index=None, sequence_name=None, ids=(0, 1), no_images=False, return_path = False):
-        if sequence_name is None:
-            sequence_name = self.sequence_list[index]
-        metadata = self.rotations[sequence_name]
-        category = self.category_map[sequence_name]
-
-        annos = [metadata[i] for i in ids]
-
-        if self.sort_by_filename:
-            annos = sorted(annos, key=lambda x: x["image"]["rgb_path"])
-
-        images = []
-        rotations = []
-        translations = []
-        focal_lengths = []
-        principal_points = []
-        image_paths = []
-        pts = []
-        
-        for anno in annos:
-            rgb_path = anno["rgb_path"]
-            image = Image.open(rgb_path).convert("RGB")
-
-            if self.mask_images:
-                white_image = Image.new("RGB", image.size, (255, 255, 255))
-
-                mask_path = anno["mask_path"]
-                mask = Image.open(mask_path).convert("L")
-
-                if mask.size != image.size:
-                    mask = mask.resize(image.size)
-                mask = Image.fromarray(np.array(mask) > 125)
-                image = Image.composite(image, white_image, mask)
-
-            images.append(image)
-            rotations.append(torch.tensor(anno["R"]))
-            translations.append(torch.tensor(anno["T"]))
-            pts.append(torch.tensor(anno["pts"]))
-            focal_lengths.append(torch.tensor(anno["focal_length"]))
-            principal_points.append(torch.tensor(anno["principal_point"]))
-            image_paths.append(rgb_path)
-            
-        crop_parameters = []
-        images_transformed = []
-
-        new_fls = []
-        new_pps = []
-
-        for i, (anno, image) in enumerate(zip(annos, images)):
-            w, h = image.width, image.height
-
-            if self.center_box:
-                min_dim = min(h, w)
-                top = (h - min_dim) // 2
-                left = (w - min_dim) // 2
-                bbox = np.array([left, top, left + min_dim, top + min_dim])
-            else:
-                bbox = np.array(anno["bbox"])
-                # xywh -> xyxy
-                xy = bbox[:2] + bbox[2:]
-                bbox = np.concatenate([bbox[:2], xy])
-
-            if not self.eval_time:
-                bbox_jitter = self._jitter_bbox(bbox)
-            else:
-                bbox_jitter = bbox
-
-
-            bbox_xywh = torch.FloatTensor(bbox_xyxy_to_xywh(bbox_jitter))
-            
-            (focal_length_cropped, principal_point_cropped) = adjust_camera_to_bbox_crop_(
-                focal_lengths[i], principal_points[i], torch.FloatTensor(image.size), bbox_xywh
-            )
-
-            image = self._crop_image(image, bbox_jitter, white_bg=self.mask_images)
-
-            (new_focal_length, new_principal_point) = adjust_camera_to_image_scale_(
-                focal_length_cropped,
-                principal_point_cropped,
-                torch.FloatTensor(image.size),
-                torch.FloatTensor([self.img_size, self.img_size]),
-            )
-
-            new_fls.append(new_focal_length)
-            new_pps.append(new_principal_point)
-
-            images_transformed.append(self.transform(image))
-            crop_center = (bbox_jitter[:2] + bbox_jitter[2:]) / 2
-            cc = (2 * crop_center / min(h, w)) - 1
-            crop_width = 2 * (bbox_jitter[2] - bbox_jitter[0]) / min(h, w)
-
-            crop_parameters.append(torch.tensor([-cc[0], -cc[1], crop_width]).float())
-
-        images = images_transformed
-
-        batch = {"seq_id": sequence_name, "category": category, "n": len(metadata), "ind": torch.tensor(ids)}
-
-        new_fls = torch.stack(new_fls)
-        new_pps = torch.stack(new_pps)
-
-        if self.normalize_cameras:
-            cameras = PerspectiveCameras(
-                focal_length=new_fls.numpy(),
-                principal_point=new_pps.numpy(),
-                R=[data["R"] for data in annos],
-                T=[data["T"] for data in annos],
-            )
-
-            normalized_cameras = normalize_cameras(
-                cameras, compute_optical=self.compute_optical, first_camera=self.first_camera_transform
-            )
-
-            if normalized_cameras == -1:
-                print("Error in normalizing cameras: camera scale was 0")
-                raise RuntimeError
-
-            batch["R"] = normalized_cameras.R
-            batch["T"] = normalized_cameras.T
-            batch["crop_params"] = torch.stack(crop_parameters)
-            batch["R_original"] = torch.stack([torch.tensor(anno["R"]) for anno in annos])
-            batch["T_original"] = torch.stack([torch.tensor(anno["T"]) for anno in annos])
-
-            batch["fl"] = normalized_cameras.focal_length
-            batch["pp"] = normalized_cameras.principal_point
-
-            if torch.any(torch.isnan(batch["T"])):
-                print(ids)
-                print(category)
-                print(sequence_name)
-                raise RuntimeError
-
-        else:
-            batch["R"] = torch.stack(rotations)
-            batch["T"] = torch.stack(translations)
-            batch["crop_params"] = torch.stack(crop_parameters)
-            batch["fl"] = new_fls
-            batch["pp"] = new_pps
-
-        if self.transform is not None:
-            images = torch.stack(images)
-
-        if self.color_aug and (not self.eval_time):
-            images = self.color_jitter(images)
-            if self.erase_aug:
-                images = self.rand_erase(images)
-
-        batch["image"] = images
-
-        if return_path:
-            return batch, image_paths
-        
-        return batch   
-
-
-
-
-def square_bbox(bbox, padding=0.0, astype=None):
-    """
-    Computes a square bounding box, with optional padding parameters.
-
-    Args:
-        bbox: Bounding box in xyxy format (4,).
-
-    Returns:
-        square_bbox in xyxy format (4,).
-    """
-    if astype is None:
-        astype = type(bbox[0])
-    bbox = np.array(bbox)
-    center = (bbox[:2] + bbox[2:]) / 2
-    extents = (bbox[2:] - bbox[:2]) / 2
-    s = max(extents) * (1 + padding)
-    square_bbox = np.array([center[0] - s, center[1] - s, center[0] + s, center[1] + s], dtype=astype)
-    return square_bbox
 
 
 id2obj = {
