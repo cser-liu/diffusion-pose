@@ -105,11 +105,12 @@ def train_fn(cfg: DictConfig):
 
     start_epoch = 0
     if cfg.train.resume_ckpt:
-        checkpoint = torch.load(cfg.train.resume_ckpt)
-        try:
-            model.load_state_dict(prefix_with_module(checkpoint), strict=True)
-        except:
-            model.load_state_dict(checkpoint, strict=True)
+        accelerator.load_state(cfg.train.resume_ckpt)
+        # checkpoint = torch.load(cfg.train.resume_ckpt)
+        # try:
+        #     model.load_state_dict(prefix_with_module(checkpoint), strict=True)
+        # except:
+        #     model.load_state_dict(checkpoint, strict=True)
 
         accelerator.print(f"Successfully resumed from {cfg.train.resume_ckpt}")
 
@@ -214,7 +215,7 @@ def _train_or_eval_fn(
             loss = predictions["loss"]
         else:
             with torch.no_grad():
-                predictions = model(query_image, ref_images, query_pose, training=False)
+                predictions = model(query_image, ref_images, query_pose, ref_pose, training=False)
 
         pred_pose = predictions["pred_pose"] # object pose
 
