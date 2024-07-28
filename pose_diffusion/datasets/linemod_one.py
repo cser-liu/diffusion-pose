@@ -36,7 +36,8 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 class lmDataset(Dataset):
     def __init__(
         self,
-        category="test",
+        category=None,
+        ref_images_num=16,
         transform=None,
         img_size=224,
         eval_time=True,
@@ -55,10 +56,11 @@ class lmDataset(Dataset):
                 camera 1 has extrinsics [I | 0].
             mask_images (bool): If True, masks out the background of the images.
         """
-        if category == "all":
-            self.category = ALL_CATEGORIES
-        else:
-            self.category = TEST_CATEGORIES
+
+        # only support one category
+        assert category in ALL_CATEGORIES
+        self.obj_name = category
+        self.category = [category]
 
         if LM_DIR == None:
             raise ValueError("LINEMOD_DIR is not specified")
@@ -68,6 +70,7 @@ class lmDataset(Dataset):
         self.to_meter_scale = 1e-3
         self.add_detector_noise = False
         self.use_yolo_box = True
+        self.ref_images_num = ref_images_num
 
         self.name2classID = {'ape': 1, "benchvise": 2,  
                             'cam': 4, "can": 5,
@@ -89,7 +92,7 @@ class lmDataset(Dataset):
         self.ref_list = {}
         self.obj_pointcloud = {}
 
-        for c in category:
+        for c in self.category:
             obj_id = self.name2classID[c]
             obj_full_name = "-".join(["0801", "lm" + str(int(obj_id)), "others"])
             obj_path = osp.join(self.LM_DIR, obj_full_name)
@@ -110,13 +113,13 @@ class lmDataset(Dataset):
             obj_pointcloud = py3d_io.load_ply(model_path)[0].numpy()  # NOTE: models' units are m
             self.obj_pointcloud[c] = obj_pointcloud
 
+            diameter_path = osp.join(obj_path, "diameter.txt")
+            self.diameter = np.loadtxt(diameter_path)
+
             self.query_list[c] = []
             for i in os.listdir(query_rgb_path):
                 t = i.replace('png', 'txt')
                 img_path = osp.join(query_rgb_path, i)
-
-                # collect all query image path
-                self.all_data.append(img_path)
 
                 gt_pose_path = osp.join(query_pose_path, t)
                 assert osp.exists(gt_pose_path), f"{gt_pose_path}"
@@ -132,6 +135,10 @@ class lmDataset(Dataset):
                     'K': K_crop,
                 }
                 self.query_list[c].append(obj_info)
+
+                # collect all query images
+                self.all_data.append(obj_info)
+
 
             self.ref_list[c] = []
             for i in os.listdir(ref_rgb_path):
@@ -164,7 +171,7 @@ class lmDataset(Dataset):
 
         query_image = self.all_data[idx]
 
-        cur_obj = query_image['obj_id']
+        cur_obj = self.obj_name
         
         ref_len = len(self.ref_list[cur_obj])
         ids = np.random.choice(ref_len, self.ref_images_num, replace=False)
@@ -193,14 +200,13 @@ class lmDataset(Dataset):
         for i in ids:
             ref = self.ref_list[cur_obj][i]
             ref_rgb_path = ref['rgb_path']
-            ref_bbox = ref['bbox']
             ref_pose = ref['pose']
-            ref_R = ref['R']
-            ref_T = ref['T']
-            K = ref['cam_K']
+            ref_R = ref_pose[:, :3]
+            ref_T = ref_pose[:, 3]
+            K = ref['K']
 
 
-            original_img = cv2.imread(ref_rgb_path)
+            image_crop = cv2.imread(ref_rgb_path)
 
             ref_images.append(torch.tensor(image_crop)) # 3xHxW
             ref_poses.append(torch.tensor(ref_pose))

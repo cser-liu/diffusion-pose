@@ -22,7 +22,8 @@ from pytorch3d.ops import corresponding_cameras_alignment
 from pytorch3d.renderer.cameras import PerspectiveCameras
 from pytorch3d.vis.plotly_vis import plot_scene
 
-from datasets.linemod_test import TRAINING_CATEGORIES, TEST_CATEGORIES, DEBUG_CATEGORIES
+from datasets.linemod_one import ALL_CATEGORIES, TEST_CATEGORIES
+from datasets.linemod_one import lmDataset
 from util.match_extraction import extract_match
 from util.geometry_guided_sampling import geometry_guided_sampling
 # from util.metric import camera_to_rel_deg, calculate_auc_np
@@ -69,21 +70,10 @@ def test_fn(cfg: DictConfig):
         accelerator.print(f"Successfully resumed from {cfg.test.resume_ckpt}")
 
 
-    categories = cfg.test.category
-
-    # if "seen" in categories:
-    #     categories = TRAINING_CATEGORIES
-            
-    if "unseen" in categories:
+    if cfg.test.category == "test":
         categories = TEST_CATEGORIES
-    
-    if "debug" in categories:
-        categories = DEBUG_CATEGORIES
-    
-    if "all" in categories:
-        categories = TRAINING_CATEGORIES + TEST_CATEGORIES
-    
-    categories = sorted(categories)
+    else:
+        categories = ALL_CATEGORIES
 
     print("-"*100)
     print(f"Testing on {categories}")
@@ -109,27 +99,17 @@ def test_fn(cfg: DictConfig):
             accelerator = accelerator,
         )
 
-        category_dict["r_Error"][category] = error_dict["r_Error"]
-        category_dict["t_Error"][category] = error_dict["t_Error"]
-        category_dict["ADD_metric"][category] = error_dict["ADD_metric"]
-        category_dict["Proj2D"][category] = error_dict["Proj2D"]
+        agg_metric = aggregate_metrics(error_dict)
         
         print("-"*100)
-        print(f"Category {category} Done")
-    
-    for m_name in metric_name:
-        category_dict[m_name]["mean"] = np.mean(list(category_dict[m_name].values()))     
+        print(f"Category {category} Done")  
 
-    for c_name in (categories + ["mean"]): 
-        print_str = f"{c_name.ljust(20)}: "
-        for m_name in metric_name:  
-            print_num = np.mean(category_dict[m_name][c_name])
+        print_str = f"{category}: "
+        for m_name in agg_metric.keys():  
+            print_num = agg_metric[m_name]
             print_str = print_str + f"{m_name} is {print_num:.3f} | " 
             
-        if c_name == "mean":
-            print("-"*100)
         print(print_str)
-        
 
     return True
 
@@ -139,33 +119,43 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
     print(f"******************************** test on {category} ********************************")
 
     # Data loading
-    test_dataset = get_lm_dataset_test(cfg, category=category)
-    
-    category_error_dict = {"r_Error":[], "t_Error":[], "ADD_metric":[], "Proj2D":[]}
-    
-    for seq_name in test_dataset.sequence_list: 
-        # print(f"Testing the sequence {seq_name.ljust(15, ' ')} of category {category.ljust(15, ' ')}")
-        metadata = test_dataset.rotations[seq_name]
-        print(f"length of metadata is {len(metadata)}")
-        
-        if len(metadata) < num_frames:
-            print(f"Skip sequence {seq_name}")
-            continue
-        
-        if random_order:
-            ids = np.random.choice(len(metadata), num_frames, replace=False)
-        else:
-            raise ValueError("Please specify your own sampling strategy")
-            
-        batch, image_paths = test_dataset.get_data(sequence_name=seq_name, ids=ids, return_path = True)
+    test_dataset = lmDataset(category=category, LM_DIR=cfg.test.LM_DIR)
 
-        # Use load_and_preprocess_images() here instead of using batch["image"] as
-        #       images = batch["image"].to(accelerator.device)
-        # because we need bboxes_xyxy and resized_scales for GGS
-        # TODO combine this into Co3D V2 dataset
-        images, image_info = load_and_preprocess_images(image_paths = image_paths, image_size = cfg.test.img_size)
-        images = images.to(accelerator.device)
-        
+    dataloader = torch.utils.data.DataLoader(
+        test_dataset,
+        batch_size = cfg.test.batch_size,
+        shuffle = True,
+    )    
+
+    pts = test_dataset.obj_pointcloud[category]
+    camK = test_dataset.camK # original K
+    diameter = test_dataset.diameter
+
+
+    category_error_dict = {"R_errs":[], "t_errs":[], "ADD_metric":[], "Proj2D":[]}
+
+    for step, batch in enumerate(dataloader):  
+
+        # data preparation
+        query_image = batch['query_image']['image'].permute(0, 3, 1, 2).to(accelerator.device) # bx3xhxw
+        query_T = batch['query_image']['T'].to(accelerator.device) # bx3
+        query_R = batch['query_image']['R'].to(accelerator.device)# bx3x3
+
+        ref_images = batch['ref_images']['image'].permute(0 ,1, 4, 2, 3).to(accelerator.device) # bxrx3xhxw
+        ref_T = batch['ref_images']['T'].to(accelerator.device) # bxrx3
+        ref_R = batch['ref_images']['R'].to(accelerator.device) # bxrx3x3
+
+        batch_size = query_image.shape[0]
+
+        query_pose = {
+            'R': query_R,
+            'T': query_T
+        }
+        ref_pose = {
+            'R': ref_R,
+            'T': ref_T
+        }
+
         if cfg.GGS.enable:
             kp1, kp2, i12 = extract_match(image_paths = image_paths, image_info = image_info)
             
@@ -185,49 +175,37 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
             cond_fn = None
             print("[92m=====> Sampling without GGS <=====[0m")
 
-            
-        translation = batch["T"].to(accelerator.device)
-        rotation = batch["R"].to(accelerator.device)
-        # fl = batch["fl"].to(accelerator.device)
-        # pp = batch["pp"].to(accelerator.device)
-        pts = test_dataset.obj_pointcloud
-        camK = test_dataset.camK
-        diameter = test_dataset.diameter
-
-        batch_size = len(images)
-        # expand to 1 x N x 3 x H x W
-        images = images.unsqueeze(0)
-        
-        print(f"image num is {batch_size}")
-
         with torch.no_grad():
-            predictions = model(images, cond_fn=cond_fn, cond_start_step=cfg.GGS.start_step, training=False)
+            predictions = model(query_image, ref_images, query_pose, ref_pose, training=False)
 
-        pred_pose = predictions["pred_pose"]
-        pred_rot = pred_pose["R"]
-        pred_tran = pred_pose["T"]
+        pred_pose = predictions["pred_pose"] # object pose, b x (r+1) x 7
+    
+        pred_rot = pred_pose["R"] # b x (r+1) x 3 x 3
+        pred_tran = pred_pose["T"] # b x (r+1) x 3
         
         # compute metrics
         # r_error = 0
         # t_error = 0
         for i in range(batch_size):
             pred_RT = np.eye(4)
-            pred_RT[:3, :3] = np.array(pred_rot[i].cpu(), dtype=np.float32)
-            pred_RT[:3, 3] = np.array(pred_tran[i].cpu(), dtype=np.float32).reshape(3)
+            pred_RT[:3, :3] = np.array(pred_rot[i][0].cpu(), dtype=np.float32)
+            pred_RT[:3, 3] = np.array(pred_tran[i][0].cpu(), dtype=np.float32)
 
             gt_RT = np.eye(4)
-            gt_RT[:3, :3] = np.array(rotation[i].cpu(), dtype=np.float32)
-            gt_RT[:3, 3] = np.array(translation[i].cpu(), dtype=np.float32).reshape(3)
+            gt_RT[:3, :3] = np.array(query_R[i].cpu(), dtype=np.float32)
+            gt_RT[:3, 3] = np.array(query_T[i].cpu(), dtype=np.float32)
 
-            print(f"pred pose is {pred_RT}")
-            print(f"gt pose is {gt_RT}")
+            # print(f"pred pose is {pred_RT}")
+            # print(f"gt pose is {gt_RT}")
 
             re, te = calc_pose_error(pred_RT, gt_RT, unit='m')
-            add = calc_add_metric(model_3D_pts=pts, diameter=diameter, pose_pred=pred_RT, pose_target=gt_RT, return_error=True)
+            add = calc_add_metric(model_3D_pts=pts, diameter=diameter, pose_pred=pred_RT, pose_target=gt_RT)
             proj = calc_projection_2d_error(model_3D_pts=pts, pose_pred=pred_RT, pose_targets=gt_RT, K=camK)
 
-            category_error_dict["r_Error"].append(re)
-            category_error_dict["t_Error"].append(te)
+            print(f"rotation loss is {re}, translation error is {te}, ADD_metric is {add}, Proj2D is {proj}")
+
+            category_error_dict["R_errs"].append(re)
+            category_error_dict["t_errs"].append(te)
             category_error_dict["ADD_metric"].append(add)
             category_error_dict["Proj2D"].append(proj)
     
