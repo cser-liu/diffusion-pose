@@ -60,7 +60,7 @@ class YcbvDataset(Dataset):
         # /scratch/liudan/data/ycbv/...
         self.data_dir = os.path.join(YCBV_DIR, "train_pbr")
 
-        self.scenes = [f"{i:06d}" for i in range(1)]
+        self.scenes = [f"{i:06d}" for i in range(50)]
         self.add_detector_noise = False
         
         self.obj_data = {}
@@ -98,8 +98,8 @@ class YcbvDataset(Dataset):
                     if obj_id not in self.category:
                         continue
 
-                    self.obj_ply_path = osp.join(YCBV_DIR, "models/obj_{:06d}.ply".format(obj_id))
-                    self.obj_pointcloud = py3d_io.load_ply(self.obj_ply_path)[0].numpy()  
+                    # self.obj_ply_path = osp.join(YCBV_DIR, "models/obj_{:06d}.ply".format(obj_id))
+                    # self.obj_pointcloud = py3d_io.load_ply(self.obj_ply_path)[0].numpy()  
 
                     # scene_obj_id = f"scene{scene_id}_obj{obj_id}"
                     obj_class = id2obj[obj_id]
@@ -119,28 +119,28 @@ class YcbvDataset(Dataset):
                     if h <= 10 or w <= 10:
                         continue
                     
-                    mask_file = osp.join(scene_root, "mask/{:06d}_{:06d}.png".format(int_im_id, anno_i))
-                    mask_visib_file = osp.join(scene_root, "mask_visib/{:06d}_{:06d}.png".format(int_im_id, anno_i))
-                    assert osp.exists(mask_file), mask_file
-                    assert osp.exists(mask_visib_file), mask_visib_file
+                    # mask_file = osp.join(scene_root, "mask/{:06d}_{:06d}.png".format(int_im_id, anno_i))
+                    # mask_visib_file = osp.join(scene_root, "mask_visib/{:06d}_{:06d}.png".format(int_im_id, anno_i))
+                    # assert osp.exists(mask_file), mask_file
+                    # assert osp.exists(mask_visib_file), mask_visib_file
 
 
                     obj_info = {
                         "rgb_path": rgb_path,
                         # "depth_path": depth_path,
-                        "mask_path": mask_file,
-                        "mask_visib_path": mask_visib_file,    
+                        # "mask_path": mask_file,
+                        # "mask_visib_path": mask_visib_file,    
                         "obj_id": obj_id,  
-                        "bbox_visib": bbox_visib,  # x, y, w, h
+                        # "bbox_visib": bbox_visib,  # x, y, w, h
                         "bbox": bbox_obj,
                         "pose": pose,
                         "T": t,
                         "R": R,
                         "cam_K": K.reshape(3, 3),
-                        "pts": self.obj_pointcloud,
-                        "focal_length": focal_length,
-                        "principal_point": principal_point,
-                        "depth_scale": depth_factor,                   
+                        # "pts": self.obj_pointcloud,
+                        # "focal_length": focal_length,
+                        # "principal_point": principal_point,
+                        # "depth_scale": depth_factor,                   
                     }
 
                     self.obj_data[obj_id].append(obj_info)
