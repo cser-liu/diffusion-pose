@@ -176,7 +176,7 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
             print("[92m=====> Sampling without GGS <=====[0m")
 
         with torch.no_grad():
-            predictions = model(query_image, ref_images, query_pose, ref_pose, training=False)
+            predictions = model(query_image, ref_images, query_pose, ref_pose, cond_fn=cond_fn, cond_start_step=cfg.GGS.start_step, training=False)
 
         pred_pose = predictions["pred_pose"] # object pose, b x (r+1) x 7
     

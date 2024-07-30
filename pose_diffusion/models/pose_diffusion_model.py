@@ -76,16 +76,13 @@ class PoseDiffusionModel(nn.Module):
 
     def forward(
         self,
-        query_image: torch.Tensor,
-        ref_image: torch.Tensor,
+        query_image: torch.Tensor, # bx3xhxw
+        ref_images: torch.Tensor,  # bxrx3xhxw
+        query_pose = {}, 
         ref_pose = {},
-        gt_pose = {},
-        gt_cameras: Optional[CamerasBase] = None,
-        sequence_name: Optional[List[str]] = None,
         cond_fn=None, 
         cond_start_step=0,
         training=True,
-        batch_repeat=-1,
     ):
         """
         Forward pass of the PoseDiffusionModel.
@@ -105,26 +102,27 @@ class PoseDiffusionModel(nn.Module):
         Returns:
             PerspectiveCameras: PyTorch3D camera object.
         """
+        query_image = query_image.unsqueeze(1) # bx1x3xhxw
+        image = torch.cat([query_image, ref_images], dim=1) # bx(r+1)x3xhxw
 
-        image = torch.cat([query_image, ref_image], dim=0)
+        gt_R = torch.cat([query_pose['R'].unsqueeze(1), ref_pose['R']], dim=1) # bx(r+1)x3x3
+        gt_T = torch.cat([query_pose['T'].unsqueeze(1), ref_pose['T']], dim=1) # bx(r+1)x3
 
         shapelist = list(image.shape)
         batch_num = shapelist[0]
         frame_num = shapelist[1]
 
         reshaped_image = image.reshape(batch_num * frame_num, *shapelist[2:])
-        z = self.image_feature_extractor(reshaped_image).reshape(batch_num, frame_num, -1)
+        z = self.image_feature_extractor(reshaped_image).reshape(batch_num, frame_num, -1) # b x (r+1) x d
+        
         if training:
             # pose_encoding = camera_to_pose_encoding(gt_cameras, pose_encoding_type=self.pose_encoding_type)
             # Convert rotation matrix to quaternion
-            quaternion_R = matrix_to_quaternion(gt_pose["R"])
-            pose_encoding = torch.cat([gt_pose["T"], quaternion_R], dim=-1)
+            quaternion_R = matrix_to_quaternion(gt_R.reshape(-1, 3, 3))
+            pose_encoding = torch.cat([gt_T.reshape(-1, 3), quaternion_R], dim=-1) # b(r+1) x 7
 
-            if batch_repeat > 0:
-                pose_encoding = pose_encoding.reshape(batch_num * batch_repeat, -1, self.target_dim)
-                z = z.repeat(batch_repeat, 1, 1)
-            else:
-                pose_encoding = pose_encoding.reshape(batch_num, -1, self.target_dim)
+            
+            pose_encoding = pose_encoding.reshape(batch_num, -1, self.target_dim) # b x (r+1) x 7
 
             diffusion_results = self.diffuser(pose_encoding, z=z)
 

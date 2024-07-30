@@ -20,7 +20,6 @@ from accelerate import Accelerator
 from omegaconf import DictConfig, OmegaConf
 from pytorch3d.renderer.cameras import PerspectiveCameras
 from pytorch3d.vis.plotly_vis import plot_scene
-from util.metric import camera_to_rel_deg, calculate_auc, pose_to_rel_deg
 from util.train_util import (
     DynamicBatchSampler,
     VizStats,
