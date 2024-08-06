@@ -9,29 +9,19 @@ import torch.nn.functional as F
 import numpy as np
 import os.path as osp
 import os
-from pycocotools.coco import COCO
+import cv2
 from torch.utils.data import Dataset
-
-from kornia import homography_warp, normalize_homography, normal_transform_pixel
-from src.utils.data_io import read_grayscale
-from src.utils import data_utils
-from src.utils.sample_homo import sample_homography_sap
+from torchvision import transforms
 
 
 class OnePosePlusDataset(Dataset):
     def __init__(
         self,
         data_dir,
-        anno_file,
-        pad=True,
-        img_pad=False,
-        img_resize=512,
-        coarse_scale=1 / 8,
-        df=8,
-        shape3d=10000,
-        percent=1.0,
+        img_resize=256,
         split="train",
         ref_images_num=16,
+        transform=None,
     ):
         super(Dataset, self).__init__()
 
@@ -40,6 +30,16 @@ class OnePosePlusDataset(Dataset):
         self.data_dir = osp.join(data_dir, f"{self.split}_data") # scratch/liudan/data/onepose/...
         self.ref_images_num = ref_images_num
 
+        if transform is None:
+            self.transform = transforms.Compose(
+                [
+                    transforms.ToTensor(),
+                    transforms.Resize((img_resize, img_resize), antialias=True),
+                ]
+            )
+        else:
+            self.transform = transform
+
         self.category = []
         self.all_query = []
         self.query_images = {}
@@ -47,13 +47,20 @@ class OnePosePlusDataset(Dataset):
         for c in os.listdir(self.data_dir):
             obj_name = c.split("-")[1]
             self.category.append(obj_name)
-            obj_path = osp.join(data_dir, c)
+            obj_path = osp.join(self.data_dir, c)
 
             self.query_images[obj_name] = []
-            query_dir1 = osp.join(obj_path, f"{obj_name}-1")
+            query_dir1 = osp.join(obj_path, f"{obj_name}-1/color")
             for i in os.listdir(query_dir1):
                 img_path = osp.join(query_dir1, i)
-                self.query_images[obj_name].append(img_path)
+                K_crop = self.get_intrin_by_color_pth(img_path)
+                pose_gt = self.get_gt_pose_by_color_pth(img_path)
+                obj = {
+                    "img_path": img_path,
+                    "pose": pose_gt,
+                    "cam_K": K_crop,
+                }
+                self.query_images[obj_name].append(obj)
 
                 obj_info = {
                     "img_path": img_path,
@@ -61,10 +68,17 @@ class OnePosePlusDataset(Dataset):
                 }
                 self.all_query.append(obj_info)
 
-            query_dir2 = osp.join(obj_path, f"{obj_name}-2")
+            query_dir2 = osp.join(obj_path, f"{obj_name}-2/color")
             for i in os.listdir(query_dir2):
                 img_path = osp.join(query_dir2, i)
-                self.query_images[obj_name].append(img_path)
+                K_crop = self.get_intrin_by_color_pth(img_path)
+                pose_gt = self.get_gt_pose_by_color_pth(img_path)
+                obj = {
+                    "img_path": img_path,
+                    "pose": pose_gt,
+                    "cam_K": K_crop,
+                }
+                self.query_images[obj_name].append(obj)
 
                 obj_info = {
                     "img_path": img_path,
@@ -72,10 +86,17 @@ class OnePosePlusDataset(Dataset):
                 }
                 self.all_query.append(obj_info)
 
-            query_dir3 = osp.join(obj_path, f"{obj_name}-3")
+            query_dir3 = osp.join(obj_path, f"{obj_name}-3/color")
             for i in os.listdir(query_dir3):
                 img_path = osp.join(query_dir3, i)
-                self.query_images[obj_name].append(img_path) 
+                K_crop = self.get_intrin_by_color_pth(img_path)
+                pose_gt = self.get_gt_pose_by_color_pth(img_path)
+                obj = {
+                    "img_path": img_path,
+                    "pose": pose_gt,
+                    "cam_K": K_crop,
+                }
+                self.query_images[obj_name].append(obj) 
 
                 obj_info = {
                     "img_path": img_path,
@@ -84,24 +105,34 @@ class OnePosePlusDataset(Dataset):
                 self.all_query.append(obj_info)
 
             self.ref_images[obj_name] = []
-            ref_dir = osp.join(obj_path, f"{obj_name}-4")
+            ref_dir = osp.join(obj_path, f"{obj_name}-4/color")
             for i in os.listdir(ref_dir):
                 img_path = osp.join(ref_dir, i)
-                self.ref_images[obj_name].append(img_path)
+                K_crop = self.get_intrin_by_color_pth(img_path)
+                pose_gt = self.get_gt_pose_by_color_pth(img_path)
+                obj = {
+                    "img_path": img_path,
+                    "pose": pose_gt,
+                    "cam_K": K_crop,
+                }
+                self.ref_images[obj_name].append(obj)
 
             print(f"category {obj_name} has {len(self.ref_images[obj_name])} reference images, {len(self.query_images[obj_name])} query images")
-
+        
 
     def get_intrin_by_color_pth(self, img_path):
         img_ext = osp.splitext(img_path)[1]
+        
         intrin_path = img_path.replace("/color/", "/intrin_ba/").replace(img_ext, ".txt")
         K_crop = torch.from_numpy(np.loadtxt(intrin_path))  # [3*3]
+        assert K_crop.shape[0]==3 and K_crop.shape[1]==3
         return K_crop
 
     def get_gt_pose_by_color_pth(self, img_path):
         img_ext = osp.splitext(img_path)[1]
         gt_pose_path = img_path.replace("/color/", "/poses_ba/").replace(img_ext, ".txt")
         pose_gt = torch.from_numpy(np.loadtxt(gt_pose_path))  # [4*4]
+        assert pose_gt.shape[0]==4 and pose_gt.shape[1]==4
         return pose_gt
 
     def __getitem__(self, index):
@@ -117,6 +148,47 @@ class OnePosePlusDataset(Dataset):
         data_dict['query_image'] = {}
         data_dict['ref_images'] = {}
 
+        query_image = cv2.imread(img_path)
+        if self.transform:
+            query_image = self.transform(query_image)
+        query_pose = self.get_gt_pose_by_color_pth(img_path)
+
+        data_dict['query_image']['image'] = torch.as_tensor(query_image, dtype=torch.float32)
+        data_dict['query_image']['pose'] = query_pose
+        data_dict['query_image']['R'] = query_pose[:3, :3]
+        data_dict['query_image']['T'] = query_pose[:3, 3]
+
+        ref_images = []
+        ref_poses = []
+        ref_Rs = []
+        ref_Ts = []
+        for i in ids:
+            ref = self.ref_images[obj_name][i]
+            ref_rgb_path = ref['img_path']
+            ref_image = cv2.imread(ref_rgb_path)
+
+            ref_pose = ref['pose']
+            ref_R = ref_pose[:3, :3]
+            ref_T = ref_pose[:3, 3]
+            K = ref['cam_K']
+
+            if self.transform:
+                ref_image = self.transform(ref_image)
+            ref_image = torch.as_tensor(ref_image, dtype=torch.float32)
+
+            ref_images.append(ref_image) # 3xHxW
+            ref_poses.append(ref_pose)
+            ref_Rs.append(ref_R) # 3x3
+            ref_Ts.append(ref_T) # 3
+
+        data_dict['ref_images']['image'] = torch.stack(ref_images)
+        data_dict['ref_images']['pose'] = torch.stack(ref_poses)
+        data_dict['ref_images']['R'] = torch.stack(ref_Rs)
+        data_dict['ref_images']['T'] = torch.stack(ref_Ts)
+
+        # print(data_dict['ref_images']['image'].shape)
+
+        return data_dict
         
 
 
