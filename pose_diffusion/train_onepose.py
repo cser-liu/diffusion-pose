@@ -30,6 +30,9 @@ from util.train_util import (
     view_color_coded_images_for_visdom,
 )
 
+# import torch.distributed as dist
+#dist.init_process_group(backend='nccl', init_method='env://', timeout=datetime.timedelta(seconds=5400)) 
+
 
 @hydra.main(config_path="../cfgs/", config_name="onepose_train")
 def train_fn(cfg: DictConfig):
@@ -73,6 +76,7 @@ def train_fn(cfg: DictConfig):
         shuffle = True,
         pin_memory=cfg.train.pin_memory,
         persistent_workers=cfg.train.persistent_workers,
+        drop_last=True,
     )
 
     accelerator.print("length of train dataloader is: ", len(dataloader))

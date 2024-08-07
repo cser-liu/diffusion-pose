@@ -58,6 +58,7 @@ class Denoiser(nn.Module):
         t_emb = t_emb.view(B, 1, t_emb.shape[-1]).expand(-1, N, -1)
 
         x_emb = self.pose_embed(x)
+        x_emb = torch.as_tensor(x_emb, dtype=torch.float32)
 
         if self.pivot_cam_onehot:
             # add the one hot vector identifying the first camera as pivot
@@ -66,6 +67,7 @@ class Denoiser(nn.Module):
             z = torch.cat([z, cam_pivot_id], dim=-1)
 
         feed_feats = torch.cat([x_emb, t_emb, z], dim=-1)
+
 
         input_ = self._first(feed_feats)
 

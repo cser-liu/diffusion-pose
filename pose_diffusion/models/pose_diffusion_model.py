@@ -104,6 +104,7 @@ class PoseDiffusionModel(nn.Module):
         """
         query_image = query_image.unsqueeze(1) # bx1x3xhxw
         image = torch.cat([query_image, ref_images], dim=1) # bx(r+1)x3xhxw
+        # print(image.dtype)
 
         gt_R = torch.cat([query_pose['R'].unsqueeze(1), ref_pose['R']], dim=1) # bx(r+1)x3x3
         gt_T = torch.cat([query_pose['T'].unsqueeze(1), ref_pose['T']], dim=1) # bx(r+1)x3

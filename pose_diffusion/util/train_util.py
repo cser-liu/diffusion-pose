@@ -18,8 +18,9 @@ from accelerate.utils import set_seed as accelerate_set_seed
 from pytorch3d.implicitron.tools.stats import Stats
 from pytorch3d.vis.plotly_vis import plot_scene
 from pytorch3d.implicitron.tools.vis_utils import get_visdom_connection
-from datasets.co3d_v2 import Co3dDataset
 from datasets.ycbv import YcbvDataset
+from datasets.linemod_one import lmDataset
+from datasets.OnePose_dataset import OnePosePlusDataset
 
 
 logger = logging.getLogger(__name__)
@@ -92,45 +93,12 @@ class WarmupCosineRestarts(torch.optim.lr_scheduler._LRScheduler):
                 for base_lr in self.base_lrs
             ]
 
-
-def get_co3d_dataset(cfg):
-    # Common dataset parameters
-    common_params = {
-        "category": (cfg.train.category,),
-        "debug": False,
-        "mask_images": False,
-        "img_size": cfg.train.img_size,
-        "normalize_cameras": cfg.train.normalize_cameras,
-        "min_num_images": cfg.train.min_num_images,
-        "CO3D_DIR": cfg.train.CO3D_DIR,
-        "CO3D_ANNOTATION_DIR": cfg.train.CO3D_ANNOTATION_DIR,
-        "first_camera_transform": cfg.train.first_camera_transform,
-        "compute_optical": cfg.train.compute_optical,
-        "color_aug": cfg.train.color_aug,
-        "erase_aug": cfg.train.erase_aug,
-    }
-
-    # Create the train dataset
-    dataset = Co3dDataset(**common_params, split="train")
-
-    # Create the eval dataset
-    eval_dataset = Co3dDataset(**common_params, split="test", eval_time=True)
-
-    return dataset, eval_dataset
-
 def get_ycbv_dataset(cfg):
     # Common dataset parameters
     common_params = {
-        "debug": False,
         "mask_images": True,
         "img_size": cfg.train.img_size,
-        "normalize_cameras": cfg.train.normalize_cameras,
-        "min_num_images": cfg.train.min_num_images,
         "YCBV_DIR": cfg.train.YCBV_DIR,
-        "first_camera_transform": cfg.train.first_camera_transform,
-        "compute_optical": cfg.train.compute_optical,
-        "color_aug": cfg.train.color_aug,
-        "erase_aug": cfg.train.erase_aug,
     }
 
     # Create the train dataset
@@ -141,8 +109,23 @@ def get_ycbv_dataset(cfg):
 
     return dataset, eval_dataset
 
+def get_onepose_dataset(cfg):
+    # Common dataset parameters
+    common_params = {
+        "img_resize": cfg.train.img_size,
+        "data_dir": cfg.train.data_dir,
+    }
 
-def get_co3d_dataset_test(cfg, category = None):
+    # Create the train dataset
+    dataset = OnePosePlusDataset(**common_params, split="train")
+
+    # Create the eval dataset
+    # eval_dataset = YcbvDataset(**common_params, split="test", eval_time=True)
+
+    return dataset
+
+
+def get_lm_dataset_test(cfg, category = None):
     # Common dataset parameters
     if category is None:
         category = cfg.test.category
@@ -150,19 +133,18 @@ def get_co3d_dataset_test(cfg, category = None):
     common_params = {
         "category": (category,),
         "debug": False,
-        "mask_images": False,
+        "mask_images": True,
         "img_size": cfg.test.img_size,
         "normalize_cameras": cfg.test.normalize_cameras,
         "min_num_images": cfg.test.min_num_images,
-        "CO3D_DIR": cfg.test.CO3D_DIR,
-        "CO3D_ANNOTATION_DIR": cfg.test.CO3D_ANNOTATION_DIR,
+        "LM_DIR": cfg.test.LM_DIR,
         "first_camera_transform": cfg.test.first_camera_transform,
         "compute_optical": cfg.test.compute_optical,
         "sort_by_filename": True,       # to ensure images are aligned with extracted matches
     }
 
     # Create the test dataset
-    test_dataset = Co3dDataset(**common_params, split="test", eval_time=True)
+    test_dataset = lmDataset(**common_params, split="test", eval_time=True)
 
     return test_dataset
 

@@ -6,6 +6,7 @@
 
 import os
 import time
+import cv2
 from collections import OrderedDict
 from functools import partial
 from typing import Dict, List, Optional, Union
@@ -31,7 +32,6 @@ from util.metric import calc_pose_error, calc_add_metric, calc_projection_2d_err
 from util.load_img_folder import load_and_preprocess_images
 from util.train_util import (
     get_lm_dataset_test,
-    get_ycbv_dataset_test,
     set_seed_and_print,
 )
 
@@ -144,6 +144,11 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
         ref_images = batch['ref_images']['image'].permute(0 ,1, 4, 2, 3).to(accelerator.device) # bxrx3xhxw
         ref_T = batch['ref_images']['T'].to(accelerator.device) # bxrx3
         ref_R = batch['ref_images']['R'].to(accelerator.device) # bxrx3x3
+
+        for j in range(query_image.shape[0]):
+            cv2.imwrite(f"/scratch/liudan/PoseDiffusion/lm_images/{j}_query.jpg", np.array(query_image[j].permute(1, 2, 0).cpu()))
+            for i in range(ref_images.shape[1]):
+                cv2.imwrite(f"/scratch/liudan/PoseDiffusion/lm_images/{j}_ref_{i}.jpg", np.array(ref_images[j][i].permute(1, 2, 0).cpu()))
 
         batch_size = query_image.shape[0]
 
