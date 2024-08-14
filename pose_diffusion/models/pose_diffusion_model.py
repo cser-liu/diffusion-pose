@@ -104,10 +104,13 @@ class PoseDiffusionModel(nn.Module):
         """
         query_image = query_image.unsqueeze(1) # bx1x3xhxw
         image = torch.cat([query_image, ref_images], dim=1) # bx(r+1)x3xhxw
-        # print(image.dtype)
+        print(f"image.shape is {image.shape}")
 
         gt_R = torch.cat([query_pose['R'].unsqueeze(1), ref_pose['R']], dim=1) # bx(r+1)x3x3
         gt_T = torch.cat([query_pose['T'].unsqueeze(1), ref_pose['T']], dim=1) # bx(r+1)x3
+
+        print(f"gt_R.shape is {gt_R.shape}")
+        print(f"gt_T.shape is {gt_T.shape}")
 
         shapelist = list(image.shape)
         batch_num = shapelist[0]
@@ -124,10 +127,13 @@ class PoseDiffusionModel(nn.Module):
 
             
             pose_encoding = pose_encoding.reshape(batch_num, -1, self.target_dim) # b x (r+1) x 7
+            print(f"pose shape is {pose_encoding.shape}")
 
             diffusion_results = self.diffuser(pose_encoding, z=z)
 
             pose_pred_reshaped = diffusion_results["x_0_pred"].reshape(-1, diffusion_results["x_0_pred"].shape[-1])  # Reshape to BNxC
+            print(f"pose prediction shape is {pose_pred_reshaped.shape}")
+
             abs_T = pose_pred_reshaped[:, :3]
             quaternion_R = pose_pred_reshaped[:, 3:7]
             R = quaternion_to_matrix(quaternion_R)
@@ -148,6 +154,7 @@ class PoseDiffusionModel(nn.Module):
             )
 
             pose_pred_reshaped = pose_encoding.reshape(-1, pose_encoding.shape[-1])  # Reshape to BNxC
+            print(f"pose prediction shape is {pose_pred_reshaped.shape}")
             abs_T = pose_pred_reshaped[:, :3]
             quaternion_R = pose_pred_reshaped[:, 3:7]
             R = quaternion_to_matrix(quaternion_R)

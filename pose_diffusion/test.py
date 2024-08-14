@@ -141,7 +141,7 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
         query_T = batch['query_image']['T'].to(accelerator.device) # bx3
         query_R = batch['query_image']['R'].to(accelerator.device)# bx3x3
 
-        ref_images = batch['ref_images']['image'].permute(0 ,1, 4, 2, 3).to(accelerator.device) # bxrx3xhxw
+        ref_images = batch['ref_images']['image'].permute(0, 1, 4, 2, 3).to(accelerator.device) # bxrx3xhxw
         ref_T = batch['ref_images']['T'].to(accelerator.device) # bxrx3
         ref_R = batch['ref_images']['R'].to(accelerator.device) # bxrx3x3
 
@@ -185,8 +185,12 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
 
         pred_pose = predictions["pred_pose"] # object pose, b x (r+1) x 7
     
-        pred_rot = pred_pose["R"] # b x (r+1) x 3 x 3
-        pred_tran = pred_pose["T"] # b x (r+1) x 3
+        pred_rot = pred_pose["R"].reshape(batch_size, -1, 3, 3) # b x (r+1) x 3 x 3
+        pred_tran = pred_pose["T"].reshape(batch_size, -1, 3) # b x (r+1) x 3
+
+        print(pred_rot.shape)
+        print(query_R.shape)
+        print(query_T.shape)
         
         # compute metrics
         # r_error = 0
@@ -200,10 +204,11 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
             gt_RT[:3, :3] = np.array(query_R[i].cpu(), dtype=np.float32)
             gt_RT[:3, 3] = np.array(query_T[i].cpu(), dtype=np.float32)
 
-            # print(f"pred pose is {pred_RT}")
-            # print(f"gt pose is {gt_RT}")
+            if i == 0:
+                print(f"pred pose is {pred_RT}")
+                print(f"gt pose is {gt_RT}")
 
-            re, te = calc_pose_error(pred_RT, gt_RT, unit='m')
+            re, te = calc_pose_error(pred_RT, gt_RT, unit='cm')
             add = calc_add_metric(model_3D_pts=pts, diameter=diameter, pose_pred=pred_RT, pose_target=gt_RT)
             proj = calc_projection_2d_error(model_3D_pts=pts, pose_pred=pred_RT, pose_targets=gt_RT, K=camK)
 
