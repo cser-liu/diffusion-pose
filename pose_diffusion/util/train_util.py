@@ -21,6 +21,7 @@ from pytorch3d.implicitron.tools.vis_utils import get_visdom_connection
 from datasets.ycbv import YcbvDataset
 from datasets.linemod_one import lmDataset
 from datasets.OnePose_dataset import OnePosePlusDataset
+from datasets.OnePose_test import OnePoseTestDataset
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,22 @@ def get_onepose_dataset(cfg):
     }
 
     # Create the train dataset
-    dataset = OnePosePlusDataset(**common_params, split="train")
+    dataset = OnePosePlusDataset(**common_params, split="test")
+
+    # Create the eval dataset
+    # eval_dataset = YcbvDataset(**common_params, split="test", eval_time=True)
+
+    return dataset
+
+def get_onepose_dataset_test(cfg, category=""):
+    # Common dataset parameters
+    common_params = {
+        "img_resize": cfg.test.img_size,
+        "data_dir": cfg.test.data_dir,
+    }
+
+    # Create the train dataset
+    dataset = OnePoseTestDataset(**common_params, split="val", category=category)
 
     # Create the eval dataset
     # eval_dataset = YcbvDataset(**common_params, split="test", eval_time=True)

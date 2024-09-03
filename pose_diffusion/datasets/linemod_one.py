@@ -102,11 +102,11 @@ class lmDataset(Dataset):
 
             query_rgb_path = osp.join(query_path, "color")
             query_pose_path = osp.join(query_path, "poses_ba")
-            query_intrin_path = osp.join(query_path, "intrin_ba")
+            query_intrin_path = osp.join(query_path, "intrin")
 
             ref_rgb_path = osp.join(ref_path, "color")
             ref_pose_path = osp.join(ref_path, "poses_ba")
-            ref_intrin_path = osp.join(ref_path, "intrin_ba")
+            ref_intrin_path = osp.join(ref_path, "intrin")
 
             model_path = osp.join(obj_path, "model_eval.ply")
             assert osp.exists(model_path), f"{model_path}"
@@ -187,10 +187,10 @@ class lmDataset(Dataset):
 
         image_crop = cv2.imread(query_rgb_path)
 
-        data_dict['query_image']['image'] = torch.tensor(image_crop)
-        data_dict['query_image']['pose'] = torch.tensor(query_pose)
-        data_dict['query_image']['R'] = torch.tensor(query_R)
-        data_dict['query_image']['T'] = torch.tensor(query_T)
+        data_dict['query_image']['image'] = torch.as_tensor(image_crop)
+        data_dict['query_image']['pose'] = torch.as_tensor(query_pose)
+        data_dict['query_image']['R'] = torch.as_tensor(query_R)
+        data_dict['query_image']['T'] = torch.as_tensor(query_T)
 
 
         ref_images = []
@@ -208,10 +208,10 @@ class lmDataset(Dataset):
 
             image_crop = cv2.imread(ref_rgb_path)
 
-            ref_images.append(torch.tensor(image_crop)) # 3xHxW
-            ref_poses.append(torch.tensor(ref_pose))
-            ref_Rs.append(torch.tensor(ref_R)) # 3x3
-            ref_Ts.append(torch.tensor(ref_T)) # 3
+            ref_images.append(torch.as_tensor(image_crop)) # 3xHxW
+            ref_poses.append(torch.as_tensor(ref_pose))
+            ref_Rs.append(torch.as_tensor(ref_R)) # 3x3
+            ref_Ts.append(torch.as_tensor(ref_T)) # 3
 
         data_dict['ref_images']['image'] = torch.stack(ref_images)
         data_dict['ref_images']['pose'] = torch.stack(ref_poses)
@@ -237,4 +237,4 @@ ALL_CATEGORIES = [
     "phone"
 ]
 
-TEST_CATEGORIES = ["ape"]
+TEST_CATEGORIES = ["benchvise"]

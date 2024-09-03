@@ -4,7 +4,8 @@ exp_name: exp001_test
 test:
     # Please Specify Your Own Path
     LM_DIR: "/scratch/liudan/data/linemod/LM_dataset"
-    resume_ckpt: "/scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-08-06/23-42-06/checkpoints/ckpt_000005"
+    resume_ckpt: "/scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-08-06/23-42-06/checkpoints/ckpt_000050"
+    # resume_ckpt: /scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-08-20/23-19-45/checkpoints/ckpt_000000
     
     random_order: True
     num_frames: 16

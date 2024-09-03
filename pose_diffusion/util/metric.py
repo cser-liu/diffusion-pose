@@ -110,6 +110,8 @@ def aggregate_metrics(metrics, pose_thres=[1, 3, 5], proj2d_thres=5):
     R_errs = metrics["R_errs"]
     t_errs = metrics["t_errs"]
 
+    # pose_thres = pose_thres*10
+
     agg_metric = {}
     for pose_threshold in pose_thres:
         agg_metric[f"{pose_threshold}˚@{pose_threshold}cm"] = np.mean(

@@ -10,16 +10,18 @@ import numpy as np
 import os.path as osp
 import os
 import cv2
+import random
 from torch.utils.data import Dataset
 from torchvision import transforms
 
 
-class OnePosePlusDataset(Dataset):
+class OnePoseTestDataset(Dataset):
     def __init__(
         self,
         data_dir,
         img_resize=256,
-        split="train",
+        split="test",
+        category="",
         ref_images_num=16,
         transform=None,
     ):
@@ -42,72 +44,38 @@ class OnePosePlusDataset(Dataset):
 
         self.category = []
         self.all_query = []
+        self.all_images = {}
         self.query_images = {}
         self.ref_images = {}
         for c in os.listdir(self.data_dir):
+            
             obj_name = c.split("-")[1]
+            print(obj_name)
+            if obj_name != category:
+                continue
             self.category.append(obj_name)
             obj_path = osp.join(self.data_dir, c)
 
             self.query_images[obj_name] = []
-            query_dir1 = osp.join(obj_path, f"{obj_name}-1/color")
-            for i in os.listdir(query_dir1):
-                img_path = osp.join(query_dir1, i)
-                K_crop = self.get_intrin_by_color_pth(img_path)
-                pose_gt = self.get_gt_pose_by_color_pth(img_path)
-                obj = {
-                    "img_path": img_path,
-                    "pose": pose_gt,
-                    "cam_K": K_crop,
-                }
-                self.query_images[obj_name].append(obj)
-
-                obj_info = {
-                    "img_path": img_path,
-                    "obj_name": obj_name,
-                }
-                self.all_query.append(obj_info)
-
-            query_dir2 = osp.join(obj_path, f"{obj_name}-2/color")
-            for i in os.listdir(query_dir2):
-                img_path = osp.join(query_dir2, i)
-                K_crop = self.get_intrin_by_color_pth(img_path)
-                pose_gt = self.get_gt_pose_by_color_pth(img_path)
-                obj = {
-                    "img_path": img_path,
-                    "pose": pose_gt,
-                    "cam_K": K_crop,
-                }
-                self.query_images[obj_name].append(obj)
-
-                obj_info = {
-                    "img_path": img_path,
-                    "obj_name": obj_name,
-                }
-                self.all_query.append(obj_info)
-
-            query_dir3 = osp.join(obj_path, f"{obj_name}-3/color")
-            for i in os.listdir(query_dir3):
-                img_path = osp.join(query_dir3, i)
-                K_crop = self.get_intrin_by_color_pth(img_path)
-                pose_gt = self.get_gt_pose_by_color_pth(img_path)
-                obj = {
-                    "img_path": img_path,
-                    "pose": pose_gt,
-                    "cam_K": K_crop,
-                }
-                self.query_images[obj_name].append(obj) 
-
-                obj_info = {
-                    "img_path": img_path,
-                    "obj_name": obj_name,
-                }
-                self.all_query.append(obj_info)
-
             self.ref_images[obj_name] = []
-            ref_dir = osp.join(obj_path, f"{obj_name}-4/color")
-            for i in os.listdir(ref_dir):
-                img_path = osp.join(ref_dir, i)
+            self.all_images[obj_name] = []
+
+            for j in range(1, 5):
+                cur_dir = osp.join(obj_path, f"{obj_name}-{str(j)}/color")
+                if not os.path.exists(cur_dir):
+                    continue
+                for i in os.listdir(cur_dir):
+                    img_path = osp.join(cur_dir, i)
+                    self.all_images[obj_name].append(img_path)
+
+            # shuffle images of different scenes
+            random.shuffle(self.all_images[obj_name])
+
+            obj_num = len(self.all_images[obj_name])
+            t = int(obj_num / 5)
+            
+            for i in range(obj_num):
+                img_path = self.all_images[obj_name][i]
                 K_crop = self.get_intrin_by_color_pth(img_path)
                 pose_gt = self.get_gt_pose_by_color_pth(img_path)
                 obj = {
@@ -115,7 +83,16 @@ class OnePosePlusDataset(Dataset):
                     "pose": pose_gt,
                     "cam_K": K_crop,
                 }
-                self.ref_images[obj_name].append(obj)
+                # 20% images as reference
+                if i < t:
+                    self.ref_images[obj_name].append(obj)
+                else:
+                    self.query_images[obj_name].append(obj)
+                    obj_info = {
+                        "img_path": img_path,
+                        "obj_name": obj_name,
+                    }
+                    self.all_query.append(obj_info)
 
             print(f"category {obj_name} has {len(self.ref_images[obj_name])} reference images, {len(self.query_images[obj_name])} query images")
         

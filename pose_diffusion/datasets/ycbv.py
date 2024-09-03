@@ -40,7 +40,7 @@ class YcbvDataset(Dataset):
         split="train",
         transform=None,
         img_size=224,
-        ref_images_num=16,
+        ref_images_num=32,
         eval_time=False,
         mask_images=True,
         YCBV_DIR=None,
@@ -60,7 +60,7 @@ class YcbvDataset(Dataset):
         # /scratch/liudan/data/ycbv/...
         self.data_dir = os.path.join(YCBV_DIR, "train_pbr")
 
-        self.scenes = [f"{i:06d}" for i in range(50)]
+        self.scenes = [f"{i:06d}" for i in range(30)]
         self.add_detector_noise = False
         
         self.obj_data = {}

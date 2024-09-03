@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Union
 from util.camera_transform import pose_encoding_to_camera
 from util.get_fundamental_matrix import get_fundamental_matrices
 from pytorch3d.renderer.cameras import CamerasBase, PerspectiveCameras
+from pytorch3d.transforms.rotation_conversions import matrix_to_quaternion, quaternion_to_matrix
 
 
 def geometry_guided_sampling(model_mean: torch.Tensor, t: int, matches_dict: Dict, GGS_cfg: Dict):
@@ -129,26 +130,22 @@ def GGS_optimize(
 def compute_sampson_distance(
     model_mean: torch.Tensor,
     t: int,
-    processed_matches: Dict,
+    gt_pose: Dict,
     update_R=True,
     update_T=True,
-    update_FL=True,
-    pose_encoding_type: str = "absT_quaR_logFL",
     sampson_max: int = 10,
 ):
-    camera = pose_encoding_to_camera(model_mean, pose_encoding_type)
 
-    # pick the mean of the predicted focal length
-    camera.focal_length = camera.focal_length.mean(dim=0).repeat(len(camera.focal_length), 1)
+    pose = model_mean.reshape(-1, model_mean.shape[-1]) # br x 7
+    pred_t = pose[:, :3]
+    pred_R = quaternion_to_matrix(pose[:, 3:])
 
     if not update_R:
-        camera.R = camera.R.detach()
+        pred_R = pred_R.detach()
 
     if not update_T:
-        camera.T = camera.T.detach()
+        pred_t = pred_t.detach()
 
-    if not update_FL:
-        camera.focal_length = camera.focal_length.detach()
 
     kp1_homo, kp2_homo, i1, i2, he, wi, pair_idx = processed_matches.values()
     F_2_to_1 = get_fundamental_matrices(camera, he, wi, i1, i2, l2_normalize_F=False)

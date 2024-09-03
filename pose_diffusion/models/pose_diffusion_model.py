@@ -8,6 +8,7 @@ import base64
 import io
 import logging
 import math
+import time
 import pickle
 import warnings
 from collections import defaultdict
@@ -19,6 +20,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from PIL import Image
 
 from pytorch3d.renderer.cameras import CamerasBase
@@ -83,6 +85,7 @@ class PoseDiffusionModel(nn.Module):
         cond_fn=None, 
         cond_start_step=0,
         training=True,
+        batch_repeat=-1,
     ):
         """
         Forward pass of the PoseDiffusionModel.
@@ -104,35 +107,43 @@ class PoseDiffusionModel(nn.Module):
         """
         query_image = query_image.unsqueeze(1) # bx1x3xhxw
         image = torch.cat([query_image, ref_images], dim=1) # bx(r+1)x3xhxw
-        print(f"image.shape is {image.shape}")
 
         gt_R = torch.cat([query_pose['R'].unsqueeze(1), ref_pose['R']], dim=1) # bx(r+1)x3x3
         gt_T = torch.cat([query_pose['T'].unsqueeze(1), ref_pose['T']], dim=1) # bx(r+1)x3
-
-        print(f"gt_R.shape is {gt_R.shape}")
-        print(f"gt_T.shape is {gt_T.shape}")
 
         shapelist = list(image.shape)
         batch_num = shapelist[0]
         frame_num = shapelist[1]
 
+        time1 = time.time()
+
         reshaped_image = image.reshape(batch_num * frame_num, *shapelist[2:])
         z = self.image_feature_extractor(reshaped_image).reshape(batch_num, frame_num, -1) # b x (r+1) x d
+
+        time2 = time.time()
+        print(f"image feature extract time is {time2-time1}")
         
         if training:
             # pose_encoding = camera_to_pose_encoding(gt_cameras, pose_encoding_type=self.pose_encoding_type)
             # Convert rotation matrix to quaternion
             quaternion_R = matrix_to_quaternion(gt_R.reshape(-1, 3, 3))
+
             pose_encoding = torch.cat([gt_T.reshape(-1, 3), quaternion_R], dim=-1) # b(r+1) x 7
+            pose_encoding = pose_encoding.reshape(batch_num, -1, self.target_dim) # b x (r+1) x 7
+
+            if batch_repeat > 0:
+                pose_encoding = pose_encoding.repeat(batch_repeat, 1, 1)
+                z = z.repeat(batch_repeat, 1, 1)
 
             
-            pose_encoding = pose_encoding.reshape(batch_num, -1, self.target_dim) # b x (r+1) x 7
-            print(f"pose shape is {pose_encoding.shape}")
+            # pose_encoding = pose_encoding.reshape(batch_num, -1, self.target_dim) # b x (r+1) x 7
 
             diffusion_results = self.diffuser(pose_encoding, z=z)
 
+            time3 = time.time()
+            print(f"image feature extract time is {time3-time2}")
+
             pose_pred_reshaped = diffusion_results["x_0_pred"].reshape(-1, diffusion_results["x_0_pred"].shape[-1])  # Reshape to BNxC
-            print(f"pose prediction shape is {pose_pred_reshaped.shape}")
 
             abs_T = pose_pred_reshaped[:, :3]
             quaternion_R = pose_pred_reshaped[:, 3:7]
@@ -154,7 +165,7 @@ class PoseDiffusionModel(nn.Module):
             )
 
             pose_pred_reshaped = pose_encoding.reshape(-1, pose_encoding.shape[-1])  # Reshape to BNxC
-            print(f"pose prediction shape is {pose_pred_reshaped.shape}")
+            
             abs_T = pose_pred_reshaped[:, :3]
             quaternion_R = pose_pred_reshaped[:, 3:7]
             R = quaternion_to_matrix(quaternion_R)
@@ -162,6 +173,8 @@ class PoseDiffusionModel(nn.Module):
                 "R": R,
                 "T": abs_T,
             }
+
+            # quaternion_R = F.normalize(quaternion_R, p=2, dim=-1)
 
             diffusion_results = {"pred_pose": pred_pose,  "z": z}
 

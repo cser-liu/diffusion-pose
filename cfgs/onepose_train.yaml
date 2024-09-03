@@ -6,9 +6,11 @@ train:
     # Please Specify Your Own Path
     data_dir: "/scratch/liudan/data/onepose"
     # resume_ckpt: "/scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-07-26/21-48-27/checkpoints/ckpt_000000"
-    resume_ckpt: "/scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-07-29/21-18-06/checkpoints/ckpt_000005"
+    # resume_ckpt: "/scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-07-29/21-18-06/checkpoints/ckpt_000005"
+    # resume_ckpt: "/scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-08-06/23-42-06/checkpoints/ckpt_000030"
+    resume_ckpt: /scratch/liudan/PoseDiffusion/pose_diffusion/outputs/2024-08-20/23-19-45/checkpoints/ckpt_000000
     
-    batch_size: 128
+    batch_size: 64
     img_size: 224
     restart_num: 50
     lr: 0.0001

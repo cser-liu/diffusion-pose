@@ -185,6 +185,8 @@ def _train_or_eval_fn(
     stat_set = "train" if training else "eval"
 
     for step, batch in enumerate(dataloader):  
+
+        data_time1 = time.time()
         # data preparation
         query_image = batch['query_image']['image'].permute(0, 3, 1, 2).to(accelerator.device) # bx3xhxw
         query_T = batch['query_image']['T'].to(accelerator.device) # bx3
@@ -202,6 +204,8 @@ def _train_or_eval_fn(
             'R': ref_R,
             'T': ref_T
         }
+        data_time2 = time.time()
+        print(f"data process time is {data_time2-data_time1}")
 
         # for j in range(query_image.shape[0]):
         #     cv2.imwrite(f"/scratch/liudan/PoseDiffusion/new_images/{j}_query.jpg", np.array(query_image[j].cpu()))
@@ -215,6 +219,9 @@ def _train_or_eval_fn(
         else:
             with torch.no_grad():
                 predictions = model(query_image, ref_images, query_pose, ref_pose, training=False)
+
+        end_time = time.time()
+        print(f"train time is {end_time-data_time2}")
 
         pred_pose = predictions["pred_pose"] # object pose
 

@@ -23,8 +23,9 @@ from pytorch3d.ops import corresponding_cameras_alignment
 from pytorch3d.renderer.cameras import PerspectiveCameras
 from pytorch3d.vis.plotly_vis import plot_scene
 
-from datasets.linemod_one import ALL_CATEGORIES, TEST_CATEGORIES
+# from datasets.linemod_one import ALL_CATEGORIES, TEST_CATEGORIES
 from datasets.linemod_one import lmDataset
+from datasets.OnePose_test import OnePoseTestDataset
 from util.match_extraction import extract_match
 from util.geometry_guided_sampling import geometry_guided_sampling
 # from util.metric import camera_to_rel_deg, calculate_auc_np
@@ -33,12 +34,13 @@ from util.load_img_folder import load_and_preprocess_images
 from util.train_util import (
     get_lm_dataset_test,
     set_seed_and_print,
+    get_onepose_dataset_test
 )
 
 
 
 
-@hydra.main(config_path="../cfgs/", config_name="lm_test")
+@hydra.main(config_path="../cfgs/", config_name="onepose_test")
 def test_fn(cfg: DictConfig):
     OmegaConf.set_struct(cfg, False)
     accelerator = Accelerator(even_batches=False, device_placement=False)
@@ -71,16 +73,16 @@ def test_fn(cfg: DictConfig):
 
 
     if cfg.test.category == "test":
-        categories = TEST_CATEGORIES
+        categories = ["aptamil"]
     else:
-        categories = ALL_CATEGORIES
+        categories = []
 
     print("-"*100)
     print(f"Testing on {categories}")
     print("-"*100)
     
     category_dict = {}
-    metric_name = ["r_Error", "t_Error", "ADD_metric", "Proj2D"]
+    metric_name = ["r_Error", "t_Error"]
     
     for m_name in metric_name:
         category_dict[m_name] = {}
@@ -100,12 +102,9 @@ def test_fn(cfg: DictConfig):
         )
 
         agg_metric = aggregate_metrics(error_dict)
-        r_errs = np.mean(error_dict["R_errs"])
-        t_errs = np.mean(error_dict["t_errs"])
         
         print("-"*100)
         print(f"Category {category} Done")  
-        print(f"r_Error is {r_errs}, t_Error is {t_errs}")
 
         print_str = f"{category}: "
         for m_name in agg_metric.keys():  
@@ -122,7 +121,7 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
     print(f"******************************** test on {category} ********************************")
 
     # Data loading
-    test_dataset = lmDataset(category=category, LM_DIR=cfg.test.LM_DIR, ref_images_num=cfg.test.num_frames)
+    test_dataset = OnePoseTestDataset(category=category, data_dir=cfg.test.data_dir, split='test')
 
     dataloader = torch.utils.data.DataLoader(
         test_dataset,
@@ -130,9 +129,9 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
         shuffle = True,
     )    
 
-    pts = test_dataset.obj_pointcloud[category]
-    camK = test_dataset.camK # original K
-    diameter = test_dataset.diameter
+    # pts = test_dataset.obj_pointcloud[category]
+    # camK = test_dataset.camK # original K
+    # diameter = test_dataset.diameter
 
 
     category_error_dict = {"R_errs":[], "t_errs":[], "ADD_metric":[], "Proj2D":[]}
@@ -140,18 +139,14 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
     for step, batch in enumerate(dataloader):  
 
         # data preparation
-        query_image = batch['query_image']['image'].permute(0, 3, 1, 2).to(accelerator.device) # bx3xhxw
+        query_image = batch['query_image']['image'].to(accelerator.device) # bx3xhxw
         query_T = batch['query_image']['T'].to(accelerator.device) # bx3
         query_R = batch['query_image']['R'].to(accelerator.device)# bx3x3
 
-        ref_images = batch['ref_images']['image'].permute(0, 1, 4, 2, 3).to(accelerator.device) # bxrx3xhxw
+        ref_images = batch['ref_images']['image'].to(accelerator.device) # bxrx3xhxw
         ref_T = batch['ref_images']['T'].to(accelerator.device) # bxrx3
         ref_R = batch['ref_images']['R'].to(accelerator.device) # bxrx3x3
 
-        for j in range(query_image.shape[0]):
-            cv2.imwrite(f"/scratch/liudan/PoseDiffusion/lm_images/{j}_query.jpg", np.array(query_image[j].permute(1, 2, 0).cpu()))
-            for i in range(ref_images.shape[1]):
-                cv2.imwrite(f"/scratch/liudan/PoseDiffusion/lm_images/{j}_ref_{i}.jpg", np.array(ref_images[j][i].permute(1, 2, 0).cpu()))
 
         batch_size = query_image.shape[0]
 
@@ -190,41 +185,33 @@ def _test_one_category(model, category, cfg, num_frames, random_order, accelerat
     
         pred_rot = pred_pose["R"].reshape(batch_size, -1, 3, 3) # b x (r+1) x 3 x 3
         pred_tran = pred_pose["T"].reshape(batch_size, -1, 3) # b x (r+1) x 3
-
-        gt_rot = torch.cat([query_R.unsqueeze(1), ref_R], dim=1)
-        gt_tran = torch.cat([query_T.unsqueeze(1), ref_T], dim=1)
-
-        # print(pred_rot.shape)
-        # print(query_R.shape)
-        # print(query_T.shape)
         
         # compute metrics
         # r_error = 0
         # t_error = 0
         for i in range(batch_size):
-            for j in range(num_frames+1):
-                pred_RT = np.eye(4)
-                pred_RT[:3, :3] = np.array(gt_rot[i][j].cpu(), dtype=np.float32)
-                pred_RT[:3, 3] = np.array(pred_tran[i][j].cpu(), dtype=np.float32)
+            pred_RT = np.eye(4)
+            pred_RT[:3, :3] = np.array(pred_rot[i][0].cpu(), dtype=np.float32)
+            pred_RT[:3, 3] = np.array(pred_tran[i][0].cpu(), dtype=np.float32)
 
-                gt_RT = np.eye(4)
-                gt_RT[:3, :3] = np.array(gt_rot[i][j].cpu(), dtype=np.float32)
-                gt_RT[:3, 3] = np.array(gt_tran[i][j].cpu(), dtype=np.float32)
+            gt_RT = np.eye(4)
+            gt_RT[:3, :3] = np.array(query_R[i].cpu(), dtype=np.float32)
+            gt_RT[:3, 3] = np.array(query_T[i].cpu(), dtype=np.float32)
 
-            # if i == 0:
-            #     print(f"pred pose is {pred_RT}")
-            #     print(f"gt pose is {gt_RT}")
+            if i == 0:
+                print(f"pred pose is {pred_RT}")
+                print(f"gt pose is {gt_RT}")
 
-                re, te = calc_pose_error(pred_RT, gt_RT, unit='cm')
-                add = calc_add_metric(model_3D_pts=pts, diameter=diameter, pose_pred=pred_RT, pose_target=gt_RT)
-                proj = calc_projection_2d_error(model_3D_pts=pts, pose_pred=pred_RT, pose_targets=gt_RT, K=camK)
+            re, te = calc_pose_error(pred_RT, gt_RT, unit='cm')
+            # add = calc_add_metric(model_3D_pts=pts, diameter=diameter, pose_pred=pred_RT, pose_target=gt_RT)
+            # proj = calc_projection_2d_error(model_3D_pts=pts, pose_pred=pred_RT, pose_targets=gt_RT, K=camK)
 
-            # print(f"rotation loss is {re}, translation error is {te}, ADD_metric is {add}, Proj2D is {proj}")
+            print(f"rotation loss is {re}, translation error is {te}")
 
-                category_error_dict["R_errs"].append(re)
-                category_error_dict["t_errs"].append(te)
-                category_error_dict["ADD_metric"].append(add)
-                category_error_dict["Proj2D"].append(proj)
+            category_error_dict["R_errs"].append(re)
+            category_error_dict["t_errs"].append(te)
+            # category_error_dict["ADD_metric"].append(add)
+            # category_error_dict["Proj2D"].append(proj)
     
     return category_error_dict
 

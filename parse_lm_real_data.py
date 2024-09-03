@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument(
         "--data_base_dir", type=str, default="/scratch/liudan/data/linemod/lm_full"
     )
-    parser.add_argument("--obj_id", type=str, default="1")
+    parser.add_argument("--obj_id", type=str, default="4")
     parser.add_argument("--split", type=str, default="train", choices=["train", "val"])
     parser.add_argument("--assign_onepose_id", type=str, default="0801")
     parser.add_argument("--add_detector_noise", action='store_true')

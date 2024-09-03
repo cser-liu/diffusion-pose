@@ -97,7 +97,7 @@ def train_fn(cfg: DictConfig):
     # Accelerator setup
     model, dataloader, optimizer, lr_scheduler = accelerator.prepare(model, dataloader, optimizer, lr_scheduler)
 
-    start_epoch = 0
+    start_epoch = 1
     if cfg.train.resume_ckpt:
         accelerator.load_state(cfg.train.resume_ckpt)
         # checkpoint = torch.load(cfg.train.resume_ckpt)
